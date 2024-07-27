@@ -1,0 +1,34 @@
+body {
+    font-family: 'Arial', sans-serif; 
+}
+
+.page-header {
+    width: 100%; /* Full width of the viewport */
+    background-color: #8e8888; /* Example background color */
+    color: white; /* Text color */
+    text-align: center; /* Center the text */
+    padding: 1px 0; /* Padding for top and bottom */
+    /* Add more styling as needed */
+}
+
+.grid-container {
+    display: grid;
+    grid-template-columns: 1fr 5fr; /* Two columns, one for the left and one for the right */
+    gap: 1px; /* Adjust the gap between the columns as needed */
+}
+
+.left-panel {
+    /* Style for the left panel containing forms and buttons */
+    padding: 10px;
+    background-color: #f0f0f0;
+}
+
+.right-panel {
+    /* Style for the right panel containing the Leaflet map */
+    padding: 20px;
+    background-color: #ffffff;
+}
+
+.messages li {
+    color: red; 
+}

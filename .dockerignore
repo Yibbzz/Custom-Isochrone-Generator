@@ -1,0 +1,31 @@
+# Ignore local .terraform directories
+**/terraform_configs/**/.terraform*
+**/terraform_configs/**/*.tfstate*
+**/terraform_configs/**/crash.log
+**/terraform_configs/**/override.tf*
+**/terraform_configs/**/*_override.tf*
+**/terraform_configs/**/terraform.tfvars*
+**/terraform_configs/**/credentials.tf
+**/terraform_configs/**/*.tfplan
+**/terraform_configs/**/.env
+**/terraform_configs/**/*.bak
+**/terraform_configs/**/*.old
+
+# Ignore editor-specific and system files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Ignore macOS-specific files
+.DS_Store
+
+# Ignore non-essential folders
+.demos/
+.old_developments/
+
+# Ignore local python venv
+.webapp_venv/
+
+# Ignore graphhopper docker tar file
+graphhopper-8.0.tar

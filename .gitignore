@@ -1,0 +1,50 @@
+# Ignore local .terraform directories
+terraform_configs/**/.terraform/
+terraform_configs/**/.terraform/*
+
+# Ignore .tfstate files
+terraform_configs/**/*.tfstate
+terraform_configs/**/*.tfstate.*
+
+# Ignore crash log files
+terraform_configs/**/crash.log
+
+# Ignore override files
+terraform_configs/**/override.tf
+terraform_configs/**/override.tf.json
+terraform_configs/**/*_override.tf
+terraform_configs/**/*_override.tf.json
+
+# Ignore sensitive variable files
+terraform_configs/**/terraform.tfvars
+terraform_configs/**/terraform.tfvars.json
+
+# Ignore sensitive provider configuration
+terraform_configs/**/credentials.tf
+
+# Ignore plan files
+terraform_configs/**/*.tfplan
+
+# Ignore environment variable files
+terraform_configs/**/.env
+
+# Ignore backup files
+terraform_configs/**/*.bak
+terraform_configs/**/*.old
+
+# Ignore editor-specific files
+.vscode/
+.idea/
+*.swp
+*~
+
+# Ignore compiled files
+cache/
+*.pyc
+__pycache__/
+
+# Ignore macOS-specific files
+.DS_Store
+
+# Ignore django secret key and access code
+.env

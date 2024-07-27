@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      serviceAccountName: django-app-service-account  
+      containers:
+      - name: celery-worker
+        image: 992382406887.dkr.ecr.eu-north-1.amazonaws.com/django-app:latest 
+        imagePullPolicy: Always
+        command: ["celery", "-A", "webproject", "worker", "--loglevel=info"]
+        env:
+          - name: DB_USER
+            valueFrom:
+              secretKeyRef:
+                name: my-rds-secret
+                key: username
+          - name: DB_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: my-rds-secret
+                key: password
+          - name: DB_NAME
+            value: "postgresdb" 
+          - name: DB_HOST
+            value: "database-1.c9q0imsss307.eu-north-1.rds.amazonaws.com"
+          - name: DB_PORT
+            value: "5432" 

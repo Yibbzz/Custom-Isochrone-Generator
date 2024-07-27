@@ -1,0 +1,79 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<link rel="icon" type="image/x-icon" href="{% static 'images/Iso_Image_32bit.ico' %}">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>How to Use the Webapp</title>
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        line-height: 1.6;
+        margin: 20px;
+    }
+    .container {
+        max-width: 800px;
+        margin: auto;
+        padding: 20px;
+        background: #f4f4f4;
+        border-radius: 8px;
+    }
+    h1 {
+        color: #333;
+    }
+    ul, ol {
+        margin-left: 20px;
+    }
+    a {
+        color: #007bff;
+        text-decoration: none;
+    }
+    a:hover {
+        text-decoration: underline;
+    }
+    
+</style>
+</head>
+<body>
+
+<div class="container">
+    <button onclick="window.location.href='/geojson/';"> <--- Back to Main Site</button>
+    <h1>How to Use the Webapp</h1>
+    <p>This webapp is a tool to generate travel-time isochrones with 'Custom Data' that is not available on Open Street Map.</p>
+    <p>The 'Custom Data' geometry must be linestrings or multiline strings, in geojson format.</p>
+    <p>To produce this geometry so it is compatible with the site, you need to use existing osm data as a reference point. For example, if you want a road to continue on from another existing road, its geometry needs to intersect with the existing osm road geometry.</p>
+    <h2>Step by Step:</h2>
+    <ol>
+        <li>Download OSM data for your area of interest.
+            <ul>
+                <li>This can be done via a number of methods/services:
+                    <ul>
+                        <li><a href="https://plugins.qgis.org/plugins/QuickOSM/">QGIS with QuickOSM</a></li>
+                        <li><a href="https://overpass-turbo.eu/">Overpass Turbo</a></li>
+                        <li><a href="https://osmnx.readthedocs.io/en/stable/">OSMnx</a></li>
+                    </ul>
+                </li>
+            </ul>
+        </li>
+        <li>To make sure your network geometry intersects with existing osm data you have downloaded, you will need GIS software.
+            <p>Make sure to draw/adjust lines so that they are intersecting the osm data you have downloaded, if you want your geometries to simulate a new addition to an existing transport network. Examples are:</p>
+            <ul>
+                <li><a href="https://qgis.org/en/site/">QGIS</a></li>
+                <li><a href="https://mapshaper.org/">Mapshaper</a></li>
+                <li><a href="https://geojson.io">GeoJSON.io</a></li>
+            </ul>
+            <p>All these tools allow you to export drawn data in geojson format. To guarantee your custom geometries will be compatible, make sure they are in WGS84 (4326) coordinate system. It does not matter what attributes these geometries have.</p>
+        </li>
+        <li>Upload your custom drawn data to the site (not the existing osm data), define and submit the max speed and type of road.</li>
+        <li>Define the travel type for the routing algorithm, the time limit, and buckets (number by which to divide the given time limit to create buckets nested isochrones of time intervals).</li>
+        <li>Draw a bounding box around your custom data on the map, which will define the bounds of the isochrone. The larger this box, the longer the analysis will take.</li>
+        <li>Place a marker inside this box which will define the starting point of the isochrone.</li>
+        <li>After doing all this, press the 'Create Isochrone' button, and wait for the analysis. This can take a while if the road type, custom data or bounding box has changed. If only the isochrone settings or marker has changed it will be a lot faster.</li>
+        <li>When the isochrone is displayed on the map, you can download it as a geojson file. You may have to refresh the page to make sure the file is the latest isochrone generated.</li>
+    </ol>
+    <button onclick="window.location.href='/geojson/';"> <--- Back to Main Site</button>
+</div>
+
+</body>
+</html>

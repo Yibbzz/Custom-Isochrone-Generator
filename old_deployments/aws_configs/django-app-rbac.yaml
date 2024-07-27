@@ -1,0 +1,29 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: django-app-service-account
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: django-app-role
+rules:
+- apiGroups: [""]
+  resources: ["pods", "services"]  
+  verbs: ["get", "watch", "list", "create", "update", "patch", "delete"]  
+- apiGroups: ["apps", "extensions"]
+  resources: ["deployments"]
+  verbs: ["get", "list", "create", "update", "patch", "delete", "watch"]  
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: django-app-rolebinding
+subjects:
+- kind: ServiceAccount
+  name: django-app-service-account
+  namespace: default  
+roleRef:
+  kind: Role
+  name: django-app-role
+  apiGroup: rbac.authorization.k8s.io

@@ -1,0 +1,420 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/x-icon" href="{% static 'images/Iso_Image_32bit.ico' %}">
+    <meta charset="UTF-8">
+    <title>Custom Isochrone Generator</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.7.1/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css"/>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            height: 100vh; /* Ensure body takes full height */
+            display: flex;
+            flex-direction: column;
+        }
+
+        .page-header {
+            width: 100%;
+            background-color: #8e8888;
+            color: white;
+            text-align: center;
+            padding: 1px 0;
+        }
+
+        .grid-container {
+            display: flex;
+            flex: 1; /* Take remaining height */
+        }
+
+        .left-panel {
+            width: 30%; /* Adjust based on your preference */
+            padding: 10px;
+            background-color: #f0f0f0;
+            overflow-y: auto; /* Allow scrolling if content overflows */
+        }
+
+        .right-panel {
+            width: 70%; /* Adjust based on your preference */
+            display: flex;
+            flex-direction: column;
+        }
+
+        #mapid {
+            flex: 1; /* Take remaining height in right panel */
+            min-height: 300px; /* Minimum height for smaller screens */
+        }
+
+        .messages li {
+            color: red;
+        }
+        .right-panel form input[type="submit"], .right-panel button {
+            width: 20%; 
+            padding: 3px; 
+            margin-top: 8px; 
+            cursor: pointer; 
+        }
+
+        
+    </style>
+</head>
+<body>
+
+<script type="text/javascript">
+    // Function to get CSRF token from cookies
+    function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+            const cookies = document.cookie.split(';');
+            for (let i = 0; i < cookies.length; i++) {
+                const cookie = cookies[i].trim();
+                if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                    cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                    break;
+                }
+            }
+        }
+        return cookieValue;
+    }
+
+    // Function to setup CSRF token for fetch requests
+    function setupFetchWithCSRF() {
+        const csrftoken = getCookie('csrftoken');
+        if (!csrftoken) return;
+
+        // Interceptor for fetch requests
+        const originalFetch = window.fetch;
+        window.fetch = function(url, options = {}) {
+            options.headers = options.headers || {};
+            options.headers['X-CSRFToken'] = csrftoken;
+            return originalFetch(url, options);
+        };
+    }
+
+    // Run the setup function when the page loads
+    document.addEventListener('DOMContentLoaded', setupFetchWithCSRF);
+
+</script>
+
+<header class="page-header">
+    <div class="header-left">
+        <form action="{% url 'logout' %}" method="post">
+            {% csrf_token %}
+            <button type="submit">Logout</button>
+        </form>
+    </div>
+    <h1>Custom Isochrone Generator</h1>
+    <div class="header-right">
+        <button onclick="location.href='{% url 'export_isochrones' %}'">Export Isochrones as GeoJSON</button>
+    </div>
+</header>
+
+
+    <div class="grid-container">
+        <div class="left-panel">
+
+            <button onclick="location.href='{% url 'how_to' %}'">How to Use</button>
+
+            {% if geo_upload_form %}
+                <form method="post" enctype="multipart/form-data" id="geojsonUploadForm">
+                    {% csrf_token %}
+                    {{ geo_upload_form.as_p }}
+                    <button type="submit">Upload GeoJSON</button>
+                </form>
+
+                <script>
+                    document.getElementById('id_file').setAttribute('accept', '.geojson');
+                    document.getElementById('id_file').setAttribute('data-max-size', '5242880'); // 5MB in bytes
+                </script>
+                <script>
+                    document.getElementById('geojsonUploadForm').addEventListener('submit', function(e) {
+                        var fileInput = document.getElementById('id_file');
+                        var maxSize = fileInput.getAttribute('data-max-size');
+                        if(fileInput.files[0].size > parseInt(maxSize)) {
+                            alert('File size should not exceed 5 MB.');
+                            e.preventDefault();
+                        }
+                    });
+                </script>    
+            {% endif %}
+
+            {% if network_form %}
+            <h2 style="font-size: 16px; font-weight: normal;">Road Type of Uploaded Data:</h2>                
+            <form method="post" action="">
+                    {% csrf_token %}
+                    {% for field in network_form %}
+                        <p>
+                            {% if field.label != "Selection" %} <!-- Check the label of the field -->
+                                {{ field.label_tag }} <!-- Render the label if it's not "Selection" -->
+                            {% endif %}
+                            {{ field }}
+                            {{ field.errors }}
+                        </p>
+                    {% endfor %}
+                    <button type="submit">Submit Road Type</button>
+                </form>
+            {% endif %}
+        
+
+            {% if isochrone_form %}
+            <h2 style="font-size: 16px; font-weight: normal;">Isochrone Settings:</h2>                
+                <form id="isochroneForm" method="post" action="">
+                    {% csrf_token %}
+                    {% for field in isochrone_form %}
+                        <p>
+                            {% if field.label != "Mode selection" %} <!-- Hide the "Mode Selection" label -->
+                                {{ field.label_tag }}
+                            {% endif %}
+                            {{ field }}
+                            {{ field.errors }}
+                        </p>
+                    {% endfor %}
+                    <button type="submit">Submit Isochcrone Selection</button>
+                </form>
+            {% endif %}
+
+        </div>
+        <div class="right-panel">
+            <div id="mapid"></div>
+            <script src="https://unpkg.com/leaflet@1.7.1/dist/leaflet.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+            <script src="https://unpkg.com/turf/turf.min.js"></script>
+        
+            <script>
+            var map = L.map('mapid').setView([0, 0], 2);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+        
+            var drawnItems = new L.FeatureGroup().addTo(map);
+            drawnItems.clearLayers();  // Clears any existing layers in drawnItems
+        
+        
+            var drawnItems = new L.FeatureGroup();
+            map.addLayer(drawnItems);
+        
+            var drawControl = new L.Control.Draw({
+                edit: {
+                    featureGroup: drawnItems
+                },
+                draw: {
+                    polygon: false,
+                    polyline: false,
+                    circle: false,
+                    circlemarker: false,
+                    marker: true,
+                    rectangle: true
+                }
+            });
+            map.addControl(drawControl);
+            
+
+            map.on(L.Draw.Event.CREATED, function (event) {
+                var layer = event.layer;
+                var drawnGeometry = layer.toGeoJSON();
+
+                if (drawnGeometry.geometry.type === "Point") {
+                    // Handling for Point geometry (Marker)
+                    var geojsonString = JSON.stringify(drawnGeometry);
+                    document.getElementById('marker-data').value = geojsonString;
+                    drawnItems.addLayer(layer); // Add the layer to the map
+                } else {
+                    // Handling for Polygon geometry (Rectangle)
+                    var area = turf.area(drawnGeometry); // Area in square meters
+                    var maxArea = 500000000; // Set maximum area in square meters
+
+                    // Check if the area exceeds the maximum allowed area
+                    if (area > maxArea) {
+                        alert("Bounding Box is Beyond 50000 Hectares. Please Draw Again.");
+                        // Do not add the layer to the map or update form field
+                    } else {
+                        drawnItems.addLayer(layer); // Add the layer to the map
+                        var geojsonString = JSON.stringify(drawnGeometry);
+                        document.getElementById('geometry-data').value = geojsonString;
+                    }
+                }
+            });
+        
+            var geojsonLayer, drawnGeometryLayer;
+        
+            // Add GeoJSON data to the map
+            {% if all_geojson_data %}
+                var geojsonData = {{ all_geojson_data|safe }};
+                geojsonLayer = L.geoJSON(geojsonData, {
+                    onEachFeature: function (feature, layer) {
+                    }
+                }).addTo(map);
+            {% endif %}
+        
+            // Add the latest drawn geometry to the map
+            {% if latest_drawn_geometry %}
+                var latestDrawnGeometry = {{ latest_drawn_geometry|safe }};
+                drawnGeometryLayer = L.geoJSON(latestDrawnGeometry, {
+                    style: function(feature) {
+                        return {color: 'black', weight: 3};
+                    }
+                }).addTo(map);
+            {% endif %}
+        
+            // Add the latest marker geometry to the map
+            {% if latest_marker_geometry %}
+                var latestMarkerGeometry = {{ latest_marker_geometry|safe }};
+                markerGeometryLayer = L.geoJSON(latestMarkerGeometry, {
+                }).addTo(map);
+            {% endif %}
+        
+            // Decide which layer to zoom to
+            if (drawnGeometryLayer && drawnGeometryLayer.getLayers().length > 0) {
+                // Zoom to the latest drawn geometry
+                map.fitBounds(drawnGeometryLayer.getBounds());
+            } else if (geojsonLayer && geojsonLayer.getLayers().length > 0) {
+                // Zoom to GeoJSON data if no latest drawn geometry
+                map.fitBounds(geojsonLayer.getBounds());
+            }
+            </script>
+
+        
+            <script type="text/javascript">
+                var currentIsochroneLayer = null; // Global variable to store the current isochrone layer
+
+                {% if latest_isochrone_geometry %}
+                    var latestIsochroneGeometry = {{ latest_isochrone_geometry|safe }};
+                    currentIsochroneLayer = L.geoJSON(latestIsochroneGeometry, {
+                        style: function(feature) {
+                            return {color: 'red', weight: 2};
+                        }
+                    }).addTo(map);
+                {% endif %}
+            </script>
+
+
+            <!-- Form for Box -->
+            <form id="boxForm" method="post" action="{% url 'geojson_view' %}">
+                {% csrf_token %}
+                <input type="hidden" id="geometry-data" name="geometry_data">
+                <input type="submit" value="Save Box">
+            </form>
+        
+            <!-- Form for Marker -->
+            <form id="markerForm" method="post" action="{% url 'geojson_view' %}">
+                {% csrf_token %}
+                <input type="hidden" id="marker-data" name="marker_data">
+                <input type="submit" value="Save Marker">
+            </form>
+        
+            {% if messages %}
+                <ul class="messages">
+                    {% for message in messages %}
+                        <li{% if message.tags %} class="{{ message.tags }}"{% endif %}>{{ message }}</li>
+                    {% endfor %}
+                </ul>
+            {% endif %}
+        
+            <p>{{ network_type_string }}</p>
+            <p>{{ isochrone_string }}</p>
+
+            <button id="combined-action-btn">Create Isochrone</button>
+
+            <div id="combined-error-message" style="color:red;"></div>
+            
+            <script type="text/javascript">
+                document.getElementById('combined-action-btn').addEventListener('click', function() {
+                    var button = this;
+                    button.disabled = true; // Disable the button
+                    document.getElementById('combined-error-message').textContent = ''; // Clear previous error message
+                    var loadingMessage = document.getElementById('loadingMessageId');
+                    loadingMessage.style.display = 'block'; // Show the loading message
+
+                    fetch('/get-geodata/')
+                        .then(response => {
+                            if (!response.ok) {
+                                // If response is not ok, parse the error message from the server
+                                return response.json().then(err => { throw new Error(err.error || 'An unknown error occurred') });
+                            }
+                            return response.json();
+                        })
+                        .then(data => {
+                            console.log(data);
+                            if (data.isRunning) {
+                                // If the container is already running, proceed to make Isochrone
+                                makeIsochrone();
+                            } else {
+                                // If the container is not running yet, start polling
+                                pollContainerStatus();
+                            }
+                        })
+                        .catch(error => {
+                            console.error('Error:', error);
+                            document.getElementById('combined-error-message').textContent = 'Error: ' + error.message;
+                            loadingMessage.style.display = 'none'; // Hide loading message on error
+                            button.disabled = false; // Re-enable the button if there's an error
+                        });
+                    function pollContainerStatus() {
+                        const interval = setInterval(() => {
+                            fetch('/container-button-activate/') 
+                                .then(response => response.json())
+                                .then(data => {
+                                    if (data.isRunning) {
+                                        clearInterval(interval);
+                                        makeIsochrone(); // Proceed to make Isochrone once the container is running
+                                    }
+                                })
+                                .catch(error => {
+                                    console.error('Error:', error);
+                                    clearInterval(interval);
+                                    document.getElementById('combined-error-message').textContent = 'Error: ' + error.message;
+                                    button.disabled = false; // Re-enable the button in case of an error
+                                });
+                        }, 5000); // Poll every 5 seconds
+                    }
+
+                    function makeIsochrone() {
+                        fetch('/make-isochrone/')
+                            .then(response => {
+                                if (!response.ok) {
+                                    // If response is not ok, parse the error message from the server
+                                    return response.json().then(err => { throw new Error(err.error) });
+                                }
+                                return response.json();
+                            })
+                            .then(data => {
+                                if (data.status === 'success') {
+                                    // Remove the existing isochrone layer if it exists
+                                    if (currentIsochroneLayer) {
+                                        map.removeLayer(currentIsochroneLayer);
+                                    }
+
+                                    // Parse the GeoJSON data
+                                    var isoData = JSON.parse(data.iso_json);
+                                    // Add the new GeoJSON data to the map
+                                    currentIsochroneLayer = L.geoJSON(isoData, {
+                                        style: function(feature) {
+                                            return { color: '#f06', weight: 2 };
+                                        }
+                                    }).addTo(map);
+
+                                    map.fitBounds(currentIsochroneLayer.getBounds());
+                                }
+                            })
+                            .catch(error => {
+                                console.error('Error:', error);
+                                document.getElementById('combined-error-message').textContent = 'Error: ' + error.message;
+                            })
+                            .finally(() => {
+                                loadingMessage.style.display = 'none'; // Hide loading message after completion
+                                button.disabled = false; // Re-enable the button after Isochrone is handled
+                            });
+                        }
+                    });
+            </script>
+
+            <div id="loadingMessageId" class="loading" style="display: none;">Please wait for analysis...</div>
+        </div>
+    </div>
+</div>
+</body>
+</html>

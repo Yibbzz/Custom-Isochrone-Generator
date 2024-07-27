@@ -1,0 +1,36 @@
+{% load static %}
+<!DOCTYPE html>
+<html>
+<head>
+    <link rel="icon" type="image/x-icon" href="{% static 'images/Iso_Image_32bit.ico' %}">
+    <title>Login</title>
+    <meta charset="UTF-8">
+</head>
+<body>
+
+{% if messages %}
+    <ul>
+        {% for message in messages %}
+            <li>{{ message }}</li>
+        {% endfor %}
+    </ul>
+{% endif %}
+
+<form method="post">
+    {% csrf_token %}
+    {{ form.non_field_errors }}
+    {% for field in form %}
+        <div>
+            {{ field.errors }}
+            {{ field.label_tag }} {{ field }}
+        </div>
+    {% endfor %}
+    <button type="submit">Login</button>
+</form>
+
+
+<!-- Optional: Link to a registration page -->
+<p>Don't have an account? <a href="{% url 'register' %}">Register here</a></p>
+
+</body>
+</html>

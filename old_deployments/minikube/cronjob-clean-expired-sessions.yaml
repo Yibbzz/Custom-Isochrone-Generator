@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: clean-expired-sessions
+spec:
+  schedule: '*/1 * * * *'  
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: my-django-app
+            image: my-django-app:latest
+            command: ["python", "manage.py", "check_expired_sessions"]
+            env:
+              - name: DJANGO_SETTINGS_MODULE
+                value: "myproject.settings"
+              - name: DB_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: my-db-secret
+                    key: username
+              - name: DB_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: my-db-secret
+                    key: password
+              - name: DB_NAME
+                valueFrom:
+                  configMapKeyRef:
+                    name: my-db-config
+                    key: name
+              - name: DB_HOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: my-db-config
+                    key: host
+              - name: DB_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: my-db-config
+                    key: port
+              # Include other required environment variables here
+          restartPolicy: OnFailure
