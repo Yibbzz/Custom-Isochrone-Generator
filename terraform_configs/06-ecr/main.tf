@@ -60,7 +60,7 @@ resource "aws_codebuild_project" "django_app_build" {
 
   source {
     type            = "GITHUB"
-    location        = "https://github.com/Yibbzz/webapp.git"
+    location        = "https://github.com/Yibbzz/Custom-Isochrone-Generator"
     buildspec       = "s3://bucket-for-buildspecs/aws-buildspec.yml" 
     git_clone_depth = 1
     insecure_ssl    = false
