@@ -1,6 +1,8 @@
 from pathlib import Path
 import os
 from dotenv import load_dotenv
+from celery.schedules import crontab
+
 
 # Load environment variables from .env file
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -35,8 +37,6 @@ SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
 CELERY_BROKER_URL = 'redis://redis:6379/0'
 CELERY_RESULT_BACKEND = 'redis://redis:6379/0'
-
-from celery.schedules import crontab
 
 CELERY_BEAT_SCHEDULE = {
     'close_expired_sessions_every_10_minutes': {

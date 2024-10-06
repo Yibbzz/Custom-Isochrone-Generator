@@ -62,7 +62,7 @@ resource "kubernetes_deployment" "celery_beat" {
 
           env {
             name  = "DB_HOST"
-            value = data.terraform_remote_state.post-eks.outputs.db_endpoint
+            value = local.db_host
           }
 
           env {

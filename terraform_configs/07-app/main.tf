@@ -47,7 +47,7 @@ data "terraform_remote_state" "ecr" {
   backend = "s3"
   config = {
     bucket = "my-eks-cluster-terraform-state"
-    key    = "efs-csi/terraform.tfstate"
+    key    = "ecr/terraform.tfstate"
     region = "eu-north-1"
   }
 }

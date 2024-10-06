@@ -50,7 +50,7 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
                     name="efs-claim",
                     mount_path="/custom_osm"
                 )],
-                command=["./graphhopper.sh", "-i", f"/custom_osm/{user_id}.osm", "-c", f"/custom_osm/master.yaml"]
+                command=["./graphhopper.sh", "-i", f"/custom_osm/{user_id}.osm", "-c", "/custom_osm/master.yaml"]
             )],
             volumes=[
                 client.V1Volume(
