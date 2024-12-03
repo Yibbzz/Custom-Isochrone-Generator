@@ -25,7 +25,7 @@ SECURE_HSTS_SECONDS = 31536000 # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 
-ALLOWED_HOSTS = ['custom-isochrones.co.uk', 'www.custom-isochrones.co.uk']
+ALLOWED_HOSTS = ['custom-isochrones.co.uk', 'www.custom-isochrones.co.uk', '*']
 
 LOGIN_REDIRECT_URL = 'geojson_view'
 

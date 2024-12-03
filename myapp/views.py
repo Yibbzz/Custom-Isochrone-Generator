@@ -11,9 +11,9 @@ from django.shortcuts import render, redirect
 from .forms import NetworkTypeForm, IsochroneForm, CustomAuthForm
 from .models import GeoData, BoxGeometry, Isochrone, UserRoutingPod
 
-from utils.osm_conversion import run_all
+from .utils.osm_conversion import run_all
 
-from services.process_user_inputs import (
+from .services.process_user_inputs import (
     fetch_preferences,
     fetch_forms,
     fetch_user_geojson_data,
@@ -23,7 +23,7 @@ from services.process_user_inputs import (
     process_marker_data,
     process_forms
 )
-from services.prepare_docker_data import (
+from .services.prepare_docker_data import (
     get_or_create_user_previous_inputs,
     fetch_latest_user_inputs,
     check_if_inputs_changed,
@@ -32,14 +32,14 @@ from services.prepare_docker_data import (
     get_geodata_gdfs,
     prepare_folders
 )
-from services.prepare_isochrone_data import (
+from .services.prepare_isochrone_data import (
     check_marker_geometry,
     get_user_isochrone_preferences,
     prepare_marker_geodata
 )
-from services.routing_queries import handle_isochrone_creation
+from .services.routing_queries import handle_isochrone_creation
 
-from services.create_routing_pod import (
+from .services.create_routing_pod import (
     create_or_update_deployment_and_service,
     is_user_pod_running
 )

@@ -48,3 +48,5 @@ __pycache__/
 
 # Ignore django secret key and access code
 .env
+
+blobs/
