@@ -9,6 +9,22 @@ import warnings
 import logging
 import time
 
+def configure_osmnx_cache():
+    """
+    Configures the osmnx cache folder to a persistent folder with non-root permissions
+    """
+    # Get the directory of the current file
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    # Define the cache folder relative to the current directory
+    cache_folder = os.path.join(current_dir, "../temp/osmnx_cache")
+    
+    # Ensure the cache directory exists
+    os.makedirs(cache_folder, exist_ok=True)
+    
+    # Set the osmnx cache folder
+    ox.settings.cache_folder = cache_folder
+
 def log_time(func):
     """
     Test the times each func takes to narrow down bottlenecks.
@@ -493,7 +509,9 @@ def run_all(bbox_gdf: gpd.GeoDataFrame, custom_data_gdf: gpd.GeoDataFrame, osm_f
         network_tags (dict): Dictionary of network tags to update.
     """
 
-    logging.basicConfig(filename='function_times.log', level=logging.INFO)
+    # logging.basicConfig(filename='function_times.log', level=logging.INFO)
+
+    configure_osmnx_cache() # So django can write file to non-root dir
 
     nodes_gdf, edges_gdf = get_osm_data_from_bbox(bbox_gdf)
 

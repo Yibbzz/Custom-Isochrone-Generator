@@ -40,18 +40,39 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
     container_port = 8989
 
     template = client.V1PodTemplateSpec(
-        metadata=client.V1ObjectMeta(labels={"app": "graphhopper", "user": str(user_id)}),
+        metadata=client.V1ObjectMeta(
+            labels={"app": "graphhopper", "user": str(user_id)}
+        ),
         spec=client.V1PodSpec(
-            containers=[client.V1Container(
-                name="graphhopper",
-                image=image,
-                ports=[client.V1ContainerPort(container_port=container_port)],
-                volume_mounts=[client.V1VolumeMount(
-                    name="efs-claim",
-                    mount_path="/custom_osm"
-                )],
-                command=["./graphhopper.sh", "-i", f"/custom_osm/{user_id}.osm", "-c", "/custom_osm/master.yaml"]
-            )],
+            containers=[
+                client.V1Container(
+                    name="graphhopper",
+                    image=image,
+                    ports=[client.V1ContainerPort(container_port=container_port)],
+                    volume_mounts=[
+                        client.V1VolumeMount(
+                            name="efs-claim", 
+                            mount_path="/custom_osm"
+                        )
+                    ],
+                    command=[
+                        "./graphhopper.sh",
+                        "-i",
+                        f"/custom_osm/{user_id}.osm",
+                        "-c",
+                        "/custom_osm/master.yaml"
+                    ],
+                    # Security context that drops privileges, disables privilege escalation, etc.
+                    # security_context=client.V1SecurityContext(
+                    #     run_as_non_root=True,
+                    #     run_as_user=1000,
+                    #     run_as_group=1000,
+                    #     allow_privilege_escalation=False,
+                    #     capabilities=client.V1Capabilities(drop=["ALL"]),
+                    #     read_only_root_filesystem=False
+                    # )
+                )
+            ],
             volumes=[
                 client.V1Volume(
                     name="efs-claim",
@@ -79,6 +100,7 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
     )
     
     return deployment
+
 
 
 def create_or_update_deployment(apps_v1_api: client.AppsV1Api, deployment: client.V1Deployment, namespace: str):

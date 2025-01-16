@@ -1,9 +1,9 @@
 FROM python:3.10.12
 
 # Set environment variables
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-ENV GDAL_LIBRARY_PATH /usr/lib/libgdal.so
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GDAL_LIBRARY_PATH=/usr/lib/libgdal.so
 
 WORKDIR /webapp
 
@@ -23,5 +23,12 @@ RUN pip install --upgrade pip \
 # Copy the current directory contents into the container
 COPY . /webapp/
 
-# Run the app
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+# Copy the entrypoint script to the image. This is for running migrations etc.
+COPY entrypoint.sh /entrypoint.sh
+# Make the script executable
+RUN chmod +x /entrypoint.sh
+# Set the entrypoint to the script
+ENTRYPOINT ["/entrypoint.sh"]
+
+# Default command (can still be overridden in Kubernetes)
+CMD ["gunicorn", "webproject.wsgi:application", "--bind", "0.0.0.0:8000","--workers", "12","--threads", "2","--timeout", "60"]

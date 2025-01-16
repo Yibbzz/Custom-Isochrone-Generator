@@ -3,10 +3,8 @@ import os
 from dotenv import load_dotenv
 from celery.schedules import crontab
 
-
 # Load environment variables from .env file
 BASE_DIR = Path(__file__).resolve().parent.parent
-
 load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 SECRET_KEY = os.getenv('DJANGO_SECRET_KEY')
@@ -15,8 +13,9 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-DEBUG = False
+DEBUG = True
 
+"""
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 SECURE_SSL_REDIRECT = True
 SESSION_COOKIE_SECURE = True
@@ -24,6 +23,14 @@ CSRF_COOKIE_SECURE = True
 SECURE_HSTS_SECONDS = 31536000 # 1 year
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
+"""
+SECURE_PROXY_SSL_HEADER = None  # Remove the header for forwarded protocol
+SECURE_SSL_REDIRECT = False  # Disable automatic redirection to HTTPS
+SESSION_COOKIE_SECURE = False  # Allow cookies over HTTP
+CSRF_COOKIE_SECURE = False  # Allow CSRF cookies over HTTP
+SECURE_HSTS_SECONDS = 0  # Disable HTTP Strict Transport Security (HSTS)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = False  # Don't include subdomains for HSTS
+SECURE_HSTS_PRELOAD = False  # Disable HSTS preload
 
 ALLOWED_HOSTS = ['custom-isochrones.co.uk', 'www.custom-isochrones.co.uk', '*']
 
