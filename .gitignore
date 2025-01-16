@@ -22,6 +22,9 @@ terraform_configs/**/terraform.tfvars.json
 # Ignore sensitive provider configuration
 terraform_configs/**/credentials.tf
 
+webapp_venv
+.webapp_venv/
+
 # Ignore plan files
 terraform_configs/**/*.tfplan
 
