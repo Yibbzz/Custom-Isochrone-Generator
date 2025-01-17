@@ -24,7 +24,6 @@ def get_k8s_apis() -> tuple:
     core_v1_api = client.CoreV1Api()
     return apps_v1_api, core_v1_api
 
-
 def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
     """
     Create a Kubernetes deployment object.
@@ -44,6 +43,19 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
             labels={"app": "graphhopper", "user": str(user_id)}
         ),
         spec=client.V1PodSpec(
+            init_containers=[
+                client.V1Container(
+                    name="init-permissions",
+                    image="busybox",
+                    command=["sh", "-c", "mkdir -p /data/default-gh && chown 1000:1000 /data/default-gh && chmod 700 /data/default-gh"],
+                    volume_mounts=[
+                        client.V1VolumeMount(
+                            name="local-storage",
+                            mount_path="/data/default-gh"
+                        )
+                    ]
+                )
+            ],
             containers=[
                 client.V1Container(
                     name="graphhopper",
@@ -53,6 +65,10 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
                         client.V1VolumeMount(
                             name="efs-claim", 
                             mount_path="/custom_osm"
+                        ),
+                        client.V1VolumeMount(
+                            name="local-storage", 
+                            mount_path="/data/default-gh"
                         )
                     ],
                     command=[
@@ -62,15 +78,14 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
                         "-c",
                         "/custom_osm/master.yaml"
                     ],
-                    # Security context that drops privileges, disables privilege escalation, etc.
-                    # security_context=client.V1SecurityContext(
-                    #     run_as_non_root=True,
-                    #     run_as_user=1000,
-                    #     run_as_group=1000,
-                    #     allow_privilege_escalation=False,
-                    #     capabilities=client.V1Capabilities(drop=["ALL"]),
-                    #     read_only_root_filesystem=False
-                    # )
+                    security_context=client.V1SecurityContext(
+                        run_as_non_root=True,
+                        run_as_user=1000,
+                        run_as_group=1000,
+                        allow_privilege_escalation=False,
+                        capabilities=client.V1Capabilities(drop=["ALL"]),
+                        read_only_root_filesystem=False
+                    )
                 )
             ],
             volumes=[
@@ -79,6 +94,10 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
                     persistent_volume_claim=client.V1PersistentVolumeClaimVolumeSource(
                         claim_name="efs-claim"
                     )
+                ),
+                client.V1Volume(
+                    name="local-storage",
+                    empty_dir=client.V1EmptyDirVolumeSource()
                 )
             ]
         )
@@ -100,7 +119,6 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
     )
     
     return deployment
-
 
 
 def create_or_update_deployment(apps_v1_api: client.AppsV1Api, deployment: client.V1Deployment, namespace: str):

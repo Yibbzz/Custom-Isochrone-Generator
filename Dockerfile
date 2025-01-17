@@ -30,5 +30,5 @@ RUN chmod +x /entrypoint.sh
 # Set the entrypoint to the script
 ENTRYPOINT ["/entrypoint.sh"]
 
-# Default command (can still be overridden in Kubernetes)
+# Default command
 CMD ["gunicorn", "webproject.wsgi:application", "--bind", "0.0.0.0:8000","--workers", "12","--threads", "2","--timeout", "60"]
