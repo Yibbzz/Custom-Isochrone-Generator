@@ -29,5 +29,8 @@
 
 # Ignore graphhopper docker tar file
 graphhopper-8.0.tar
+graphhopper.tar.gz
+.graphhopper.tar.gz
+graphhopper.tar.gz
 
 .blobs/
