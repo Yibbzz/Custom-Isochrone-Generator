@@ -15,24 +15,26 @@ AUTHENTICATION_BACKENDS = [
 
 DEBUG = False
 
+ENV = os.getenv("DJANGO_ENV", "development")  # default to dev
 
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SECURE_SSL_REDIRECT = True
-SESSION_COOKIE_SECURE = True
-CSRF_COOKIE_SECURE = True
-SECURE_HSTS_SECONDS = 31536000 # 1 year
-SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-SECURE_HSTS_PRELOAD = True
-
-# SECURE_PROXY_SSL_HEADER = None  # Remove the header for forwarded protocol
-# SECURE_SSL_REDIRECT = False  # Disable automatic redirection to HTTPS
-# SESSION_COOKIE_SECURE = False  # Allow cookies over HTTP
-# CSRF_COOKIE_SECURE = False  # Allow CSRF cookies over HTTP
-# SECURE_HSTS_SECONDS = 0  # Disable HTTP Strict Transport Security (HSTS)
-# SECURE_HSTS_INCLUDE_SUBDOMAINS = False  # Don't include subdomains for HSTS
-# SECURE_HSTS_PRELOAD = False  # Disable HSTS preload
-
-ALLOWED_HOSTS = ['custom-isochrones.co.uk', 'www.custom-isochrones.co.uk']
+if ENV == "production":
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    ALLOWED_HOSTS = ['custom-isochrones.co.uk', 'www.custom-isochrones.co.uk']
+else:
+    SECURE_PROXY_SSL_HEADER = None
+    SECURE_SSL_REDIRECT = False
+    SESSION_COOKIE_SECURE = False
+    CSRF_COOKIE_SECURE = False
+    SECURE_HSTS_SECONDS = 0
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = False
+    SECURE_HSTS_PRELOAD = False
+    ALLOWED_HOSTS = ['*']
 
 CSRF_TRUSTED_ORIGINS = [
     "https://custom-isochrones.co.uk",
