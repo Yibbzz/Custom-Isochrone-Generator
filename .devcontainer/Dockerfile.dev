@@ -11,7 +11,8 @@ WORKDIR /webapp
 # Install system dependencies (same as prod)
 RUN apt-get update \
     && apt-get -y install netcat-openbsd gcc postgresql \
-    && apt-get -y install gdal-bin libgdal-dev \
+    && apt-get -y install gdal-bin libgdal-dev git-lfs \
+    && git lfs install \
     && apt-get clean
 
 # Install Python dependencies (same as prod)
