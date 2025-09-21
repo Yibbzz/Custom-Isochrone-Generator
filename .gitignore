@@ -53,3 +53,19 @@ __pycache__/
 .env
 
 blobs/
+
+# Development environment files
+.devcontainer/.env
+.env
+.env.*
+!.env.example
+
+# IDE and editor files
+.vscode/settings.json
+.vscode/launch.json
+.idea/
+
+# Development containers
+.devcontainer/.env
+
+myapp/temp/

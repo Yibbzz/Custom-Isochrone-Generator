@@ -34,3 +34,8 @@ graphhopper.tar.gz
 graphhopper.tar.gz
 
 .blobs/
+
+.devcontainer/
+.vscode/
+.git/
+.gitignore

@@ -1,0 +1,40 @@
+# Development Dockerfile that inherits from production
+FROM python:3.10.12
+
+# Set environment variables (same as prod)
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GDAL_LIBRARY_PATH=/usr/lib/libgdal.so
+
+WORKDIR /webapp
+
+# Install system dependencies (same as prod)
+RUN apt-get update \
+    && apt-get -y install netcat-openbsd gcc postgresql \
+    && apt-get -y install gdal-bin libgdal-dev \
+    && apt-get clean
+
+# Install Python dependencies (same as prod)
+COPY requirements.txt /webapp/
+RUN pip install --upgrade pip \
+    # Use GDAL version that matches the libgdal-dev version installed
+    && pip install GDAL==$(gdal-config --version) \
+    && pip install -r requirements.txt
+
+# Development-specific additions
+# Install development tools
+RUN pip install ipdb debugpy
+
+# Install Telepresence
+RUN curl -fL https://github.com/telepresenceio/telepresence/releases/download/v2.24.1/telepresence-linux-amd64 -o /usr/local/bin/telepresence \
+    && chmod +x /usr/local/bin/telepresence
+
+# Copy entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
+# For development, we'll mount the code as a volume instead of copying
+# The .devcontainer will handle this mounting
+
+# Development command - use Django's development server instead of gunicorn
+CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]

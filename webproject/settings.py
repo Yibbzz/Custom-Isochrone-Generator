@@ -13,7 +13,6 @@ AUTHENTICATION_BACKENDS = [
     'django.contrib.auth.backends.ModelBackend',
 ]
 
-DEBUG = False
 
 ENV = os.getenv("DJANGO_ENV", "development")  # default to dev
 
@@ -26,6 +25,7 @@ if ENV == "production":
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
     ALLOWED_HOSTS = ['custom-isochrones.co.uk', 'www.custom-isochrones.co.uk']
+    DEBUG = False
 else:
     SECURE_PROXY_SSL_HEADER = None
     SECURE_SSL_REDIRECT = False
@@ -35,6 +35,7 @@ else:
     SECURE_HSTS_INCLUDE_SUBDOMAINS = False
     SECURE_HSTS_PRELOAD = False
     ALLOWED_HOSTS = ['*']
+    DEBUG = True
 
 CSRF_TRUSTED_ORIGINS = [
     "https://custom-isochrones.co.uk",

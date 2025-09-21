@@ -1,0 +1,65 @@
+{
+    "name": "Django K3s Development",
+    "build": {
+        "dockerfile": "Dockerfile.dev",
+        "context": ".."
+    },
+    "mounts": [
+        // Mount source code for live editing
+        "source=${localWorkspaceFolder},target=/webapp,type=bind,consistency=cached",
+        // Mount Docker socket for Telepresence (if needed)
+        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
+        // Mount kubectl config 
+        "source=${localEnv:HOME}/.kube,target=/root/.kube,type=bind,consistency=cached",
+    ],
+    "workspaceFolder": "/webapp",
+    "containerEnv": {
+        "PYTHONPATH": "/webapp"
+    },
+    "runArgs": [
+        "--network=host",
+        "--privileged",
+        "--env-file=.devcontainer/.env"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-python.python",
+                "ms-python.debugpy",
+                "ms-python.pylint",
+                "ms-python.black-formatter",
+                "ms-vscode.vscode-json"
+            ],
+            "settings": {
+                "python.defaultInterpreterPath": "/usr/local/bin/python",
+                "python.terminal.activateEnvironment": false,
+                "python.formatting.provider": "black"
+            }
+        }
+    },
+    "postCreateCommand": "pip install -e .",
+    "remoteUser": "root",
+    "features": {
+        "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
+            "version": "latest"
+        }
+    }
+}
+
+
+// this is all inside .devcontaier, so a custom development image can be span, inherited from the prod dockerfile
+// so development can be done within the container on live code for git and instant changes
+// telepresence will also be used so it can connect to the existing services within the cluster so you can test the full functionality
+
+// inherit the dockerfile
+//  for the dockerfile, mount the code instead of copying it, for live code editing
+// use telepresence to connect to the cluster and use the services of the existing django pod 
+
+// nathan@dev-server:~/Custom-Isochrone-Generator$ sudo kubectl get pods
+// NAME                             READY   STATUS    RESTARTS      AGE
+// celery-beat-7b4cc646f-zdzcm      1/1     Running   9 (20m ago)   19h
+// celery-worker-d767b44b7-5kh74    1/1     Running   2 (21m ago)   19h
+// my-django-app-5b6cd9b7bb-5lb92   1/1     Running   6 (20m ago)   19h
+// postgres-7457f47555-bbsq4        1/1     Running   2 (21m ago)   19h
+// redis-86d774df89-m29zk           1/1     Running   2 (21m ago)   19h
+// nathan@dev-server:~/Custom-Isochrone-Generator$ 
