@@ -11,6 +11,9 @@
         "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
         // Mount kubectl config 
         "source=${localEnv:HOME}/.kube,target=/root/.kube,type=bind,consistency=cached",
+        // For github auth
+        "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,consistency=cached"
+
     ],
     "workspaceFolder": "/webapp",
     "containerEnv": {
