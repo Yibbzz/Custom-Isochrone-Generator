@@ -69,3 +69,5 @@ blobs/
 .devcontainer/.env
 
 myapp/temp/
+
+myapp/media/user_osm_files/

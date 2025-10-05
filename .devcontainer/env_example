@@ -4,6 +4,8 @@
 ACCESS_CODE=1111
 DJANGO_SECRET_KEY=QhiV_EoDMSQmyBpWi65m-h28XZmK69eKOHe-47BYUTtlslyVPTxS1pNzHmmgh_VkpvBOCJRyJUHKNhQ7PtCQJA
 
+IMAGE=
+
 DB_USER=your_db_user
 DB_PASSWORD=your_db_password  
 DB_NAME=postgres

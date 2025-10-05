@@ -40,7 +40,6 @@
             }
         }
     },
-    "postCreateCommand": "pip install -e .",
     "remoteUser": "root",
     "features": {
         "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
@@ -66,3 +65,24 @@
 // postgres-7457f47555-bbsq4        1/1     Running   2 (21m ago)   19h
 // redis-86d774df89-m29zk           1/1     Running   2 (21m ago)   19h
 // nathan@dev-server:~/Custom-Isochrone-Generator$ 
+
+
+
+// need to run container as root for telepresence to work . have a different dockerfile.dev . a development cluster and production cluster?
+
+// the deployment yaml needs a flag to use the development image instead of latest. 
+
+// telepresence connect
+
+// telepresence intercept my-django-app --port 8000:8000
+
+//  psql -h $DB_HOST -U $DB_USER -d $DB_NAME -p $DB_PORT
+
+// python manage.py runserver 0.0.0.0:8000
+
+// telepresence leave my-django-app --namespace default
+
+// telepresence quit
+
+//  problem - graphhopper cannot see the osm file
+// java.lang.IllegalStateException: Your specified OSM file does not exist:/webapp/myapp/media/user_osm_files/1.osm

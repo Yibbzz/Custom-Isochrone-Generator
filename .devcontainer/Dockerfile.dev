@@ -30,6 +30,8 @@ RUN pip install ipdb debugpy
 RUN curl -fL https://github.com/telepresenceio/telepresence/releases/download/v2.24.1/telepresence-linux-amd64 -o /usr/local/bin/telepresence \
     && chmod +x /usr/local/bin/telepresence
 
+USER root
+
 # Copy entrypoint script
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh

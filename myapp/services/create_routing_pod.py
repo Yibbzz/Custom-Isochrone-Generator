@@ -2,16 +2,20 @@ import os
 from datetime import datetime
 from kubernetes import client, config, watch
 from kubernetes.client.rest import ApiException
+from kubernetes.config.config_exception import ConfigException 
 from django.http import HttpRequest
 from ..models import UserRoutingPod
 
 def load_kube_config():
     """
     Load Kubernetes configuration.
+    Tries in-cluster first; falls back to local kubeconfig for development.
     """
-    # config.load_kube_config()  # Uncomment if running locally 
-    config.load_incluster_config()
-
+    try:
+        config.load_incluster_config()
+    except ConfigException:
+        kubeconfig_path = os.environ.get("KUBECONFIG", os.path.expanduser("~/.kube/config"))
+        config.load_kube_config(config_file=kubeconfig_path)
 
 def get_k8s_apis() -> tuple:
     """
@@ -64,7 +68,7 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
                     volume_mounts=[
                         client.V1VolumeMount(
                             name="efs-claim", 
-                            mount_path="/custom_osm"
+                            mount_path="/webapp/myapp/media/user_osm_files"
                         ),
                         client.V1VolumeMount(
                             name="local-storage", 
@@ -74,9 +78,9 @@ def create_deployment_object(user_id: int, image: str) -> client.V1Deployment:
                     command=[
                         "./graphhopper.sh",
                         "-i",
-                        f"/custom_osm/{user_id}.osm",
+                        f"/webapp/myapp/media/user_osm_files/{user_id}.osm",
                         "-c",
-                        "/custom_osm/master.yaml"
+                        "/webapp/myapp/media/user_osm_files/master.yaml"
                     ],
                     security_context=client.V1SecurityContext(
                         run_as_non_root=True,
@@ -258,8 +262,7 @@ def is_user_pod_running(user_id: int, request: HttpRequest, timeout_immediately:
         bool: True if the pod is running, False otherwise.
     """
     # Use in-cluster configuration
-    config.load_incluster_config()
-
+    load_kube_config()
     # Set the API client
     core_v1_api = client.CoreV1Api()
 
