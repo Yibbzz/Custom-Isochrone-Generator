@@ -5,6 +5,7 @@
         "context": ".."
     },
     "mounts": [
+        "source=/var/lib/rancher/k3s/storage/pvc-47396694-6455-48c0-9353-ea4f53661635_default_efs-claim,target=/webapp/myapp/media/user_osm_files,type=bind,consistency=cached",
         // Mount source code for live editing
         "source=${localWorkspaceFolder},target=/webapp,type=bind,consistency=cached",
         // Mount Docker socket for Telepresence (if needed)
@@ -86,3 +87,5 @@
 
 //  problem - graphhopper cannot see the osm file
 // java.lang.IllegalStateException: Your specified OSM file does not exist:/webapp/myapp/media/user_osm_files/1.osm
+
+// will have to change the path for celery cleanup of osm files too 
