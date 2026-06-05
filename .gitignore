@@ -70,4 +70,11 @@ blobs/
 
 myapp/temp/
 
-myapp/media/user_osm_files/
+myapp/media/user_osm_files/*.tar.gz
+blobs/
+oci-layout
+__pycache__/
+*.pyc
+.env
+myapp/media/
+myapp/temp/

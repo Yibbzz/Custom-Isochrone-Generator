@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-worker
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  replicas: {{ .Values.celery.workerReplicas }}
+  selector:
+    matchLabels:
+      app: celery-worker
+  template:
+    metadata:
+      labels:
+        app: celery-worker
+    spec:
+      serviceAccountName: django-app-service-account
+      securityContext:
+        {{- toYaml .Values.celery.podSecurityContext | nindent 8 }}
+      containers:
+        - name: celery-worker
+          image: {{ include "isochrone.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "webproject", "worker", "--loglevel=info"]
+          volumeMounts:
+            - name: osm-volume
+              mountPath: /webapp/myapp/temp
+          env:
+            {{- include "isochrone.dbEnv" . | nindent 12 }}
+            - name: REDIS_HOST
+              value: redis
+            - name: TMPDIR
+              value: "/webapp/myapp/temp"
+            - name: CELERY_BROKER_URL
+              value: "redis://redis:6379/0"
+          securityContext:
+            {{- toYaml .Values.celery.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: osm-volume
+          persistentVolumeClaim:
+            claimName: efs-claim
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: celery-beat
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  replicas: {{ .Values.celery.beatReplicas }}
+  selector:
+    matchLabels:
+      app: celery-beat
+  template:
+    metadata:
+      labels:
+        app: celery-beat
+    spec:
+      serviceAccountName: django-app-service-account
+      securityContext:
+        {{- toYaml .Values.celery.podSecurityContext | nindent 8 }}
+      containers:
+        - name: celery-beat
+          image: {{ include "isochrone.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["celery", "-A", "webproject", "beat", "--loglevel=info", "--scheduler", "django_celery_beat.schedulers:DatabaseScheduler"]
+          volumeMounts:
+            - name: osm-volume
+              mountPath: /webapp/myapp/temp
+          env:
+            {{- include "isochrone.dbEnv" . | nindent 12 }}
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: django-secret
+                  key: DJANGO_SECRET_KEY
+            - name: TMPDIR
+              value: "/webapp/myapp/temp"
+            - name: CELERY_BROKER_URL
+              value: "redis://redis:6379/0"
+          securityContext:
+            {{- toYaml .Values.celery.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: osm-volume
+          persistentVolumeClaim:
+            claimName: efs-claim

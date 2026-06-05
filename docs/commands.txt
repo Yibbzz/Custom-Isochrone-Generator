@@ -1,0 +1,156 @@
+###############################################################################
+# Custom Isochrone Generator - setup & deploy runbook
+#
+# Run top to bottom to bring the stack up from scratch.
+# All commands assume you are in the repo root: ~/Custom-Isochrone-Generator
+#
+# Registries:
+#   DEV : k3d-k3d-registry.localhost:5000   (local k3d cluster)
+#   PROD: 192.168.0.202:5000                (home-server)
+###############################################################################
+
+
+# =============================================================================
+# 0. PREREQUISITES / SANITY CHECK
+# =============================================================================
+# Confirm you are pointed at the cluster you think you are. Everything below
+# targets the DEV (k3d) cluster unless stated otherwise.
+
+kubectl config current-context        # expect: k3d-k3d-cluster-1
+kubectl config get-contexts           # list all, switch with: kubectl config use-context <name>
+
+# (Only if the k3d cluster + registry don't exist yet)
+# k3d registry create registry.localhost --port 5000
+# k3d cluster create k3d-cluster-1 --registry-use k3d-k3d-registry.localhost:5000
+
+
+# =============================================================================
+# 1. BUILD, TAG & PUSH THE APP IMAGE (Django/Celery)
+# =============================================================================
+# Build context is the repo ROOT; the Dockerfile lives under docker/.
+# Note: inside the Dockerfiles the entrypoint copy line must be
+#   COPY docker/entrypoint.sh ...   (because the context is the repo root)
+
+# --- DEV: tag "development", push to the k3d registry ---
+docker build -f docker/Dockerfile.dev \
+  -t k3d-k3d-registry.localhost:5000/isochrone-app:development .
+docker push k3d-k3d-registry.localhost:5000/isochrone-app:development
+
+# --- PROD: tag "latest", push to the home-server registry ---
+docker build -f docker/Dockerfile \
+  -t 192.168.0.202:5000/isochrone-app:latest .
+docker push 192.168.0.202:5000/isochrone-app:latest
+
+
+# =============================================================================
+# 2. LOAD & PUSH GRAPHHOPPER FROM THE .tar.gz
+# =============================================================================
+# graphhopper.tar.gz is a saved Docker image. Load it, then re-tag it for
+# whichever registry you're deploying to and push.
+
+docker load -i graphhopper.tar.gz
+# ^ note the "Loaded image: <name:tag>" line it prints; use that name below.
+docker images | grep graphhopper
+
+# --- DEV ---
+docker tag graphhopper:latest k3d-k3d-registry.localhost:5000/graphhopper:latest
+docker push k3d-k3d-registry.localhost:5000/graphhopper:latest
+
+
+# =============================================================================
+# 3. CREATE SECRETS
+# =============================================================================
+# DEV: generated in-cluster by the script (idempotent, no values in git).
+#      Guards on context = k3d-k3d-cluster-1.
+chmod +x scripts/dev-secrets.sh
+./scripts/dev-secrets.sh
+
+# PROD: secrets are sealed and committed under deploy/secrets/. Apply them.
+#      (These were sealed against the PROD cluster key and only decrypt there.)
+# kubectl apply -f deploy/secrets/postgres-sealed-secret.yaml
+# kubectl apply -f deploy/secrets/django-sealed-secret.yaml
+# kubectl apply -f deploy/secrets/prod-only/cloudflared-credentials-sealed-secret.yaml
+
+# Verify the secrets the chart expects now exist:
+kubectl get secret postgres-secret django-secret -n default
+
+
+# =============================================================================
+# 4. DEPLOY THE HELM CHART
+# =============================================================================
+# --- DEV ---
+helm upgrade --install isochrone-dev ./deploy/helm/isochrone-app \
+  -f ./deploy/helm/isochrone-app/values-dev.yaml
+
+# --- PROD ---
+# helm upgrade --install isochrone ./deploy/helm/isochrone-app \
+#   -f ./deploy/helm/isochrone-app/values-prod.yaml
+
+
+# =============================================================================
+# 5. VERIFY
+# =============================================================================
+kubectl get pods
+kubectl get svc
+kubectl get ingress
+# If a pod crash-loops on startup, read the previous container's log:
+#   kubectl logs deployment/<name> --previous --tail=50
+# "Connection refused" to postgres-service early on = startup race, self-heals.
+
+
+# =============================================================================
+# 6. ACCESS THE APP (DEV)
+# =============================================================================
+# The dev ingress host is custom-isochrones.local on the traefik "web" entrypoint.
+# Make sure /etc/hosts maps the hostname to the cluster/ingress IP, e.g.:
+#   192.168.0.202   custom-isochrones.local
+# Then browse:  http://custom-isochrones.local
+
+
+# =============================================================================
+# 7. REDEPLOY AFTER A CODE CHANGE  (full image rebuild loop)
+# =============================================================================
+# Use this for PROD, or when you've changed the Dockerfile / dependencies.
+# For day-to-day DEV code changes, prefer the mirrord loop in section 9 (no
+# rebuild, instant reload).
+docker build -f docker/Dockerfile.dev \
+  -t k3d-k3d-registry.localhost:5000/isochrone-app:development .
+docker push k3d-k3d-registry.localhost:5000/isochrone-app:development
+kubectl rollout restart deployment/my-django-app deployment/celery-worker deployment/celery-beat
+kubectl rollout status deployment/my-django-app
+
+
+# =============================================================================
+# 8. TEARDOWN
+# =============================================================================
+# Remove the app (Helm-managed resources only):
+helm uninstall isochrone-dev          # DEV
+# helm uninstall isochrone            # PROD
+
+# NOT removed by helm uninstall (delete manually if you want a clean slate):
+#   - Secrets:    kubectl delete secret postgres-secret django-secret -n default
+#   - PVCs/data:  kubectl delete pvc postgres-pvc efs-claim -n default
+# NOTE: deleting postgres-pvc wipes the database. Only do this if the data is
+# disposable. Keeping the PVC across redeploys means the OLD postgres password
+# stays in effect, so re-running dev-secrets.sh won't change it (the script
+# leaves existing secrets untouched by design).
+
+
+# =============================================================================
+# 9. LOCAL DEV LOOP WITH MIRRORD  (DEV only - instant reload, no rebuild)
+# =============================================================================
+# Run Django locally (in the devcontainer) but have it behave like the
+# my-django-app pod: real cluster env, real Postgres, real ServiceAccount (so
+# it can spawn graphhopper pods), real efs-claim PVC for the OSM handoff.
+# Code is bind-mounted, so saving a file triggers runserver's autoreload.
+#
+# Mechanism: mirrord injects into the local process and proxies its network,
+# file reads, and env vars to a TARGET pod. Requires only a working kubectl
+# context, the mirrord CLI, and a Ready target pod to borrow from.
+
+# --- 9.2  Run the dev server --------------------------------------------------
+
+mirrord exec -f .mirrord/mirrord.json -- python manage.py runserver 0.0.0.0:8800
+
+
+

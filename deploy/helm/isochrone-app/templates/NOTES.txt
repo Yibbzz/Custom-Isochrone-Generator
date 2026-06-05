@@ -1,0 +1,10 @@
+Isochrone App deployed ({{ .Release.Name }}) into namespace "{{ .Values.namespace }}".
+
+  Image:      {{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag }}
+  DJANGO_ENV: "{{ .Values.django.djangoEnv }}"
+  Ingress:    {{ if .Values.ingress.enabled }}{{ .Values.ingress.host }} ({{ .Values.ingress.entrypoint }}{{ if .Values.ingress.tls }}, TLS{{ end }}){{ else }}disabled{{ end }}
+  cloudflared:{{ if .Values.cloudflared.enabled }} enabled{{ else }} disabled{{ end }}
+  metallb:    {{ if .Values.metallb.enabled }}enabled{{ else }}disabled{{ end }}
+
+Reminder: this chart references existing secrets (postgres-secret, django-secret{{ if .Values.cloudflared.enabled }}, cloudflared-credentials, cloudflared-origin-cert{{ end }}).
+Make sure those exist in the cluster, or set secrets.create=true for postgres/django.

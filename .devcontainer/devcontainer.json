@@ -1,91 +1,11 @@
+// .devcontainer/devcontainer.json
 {
-    "name": "Django K3s Development",
-    "build": {
-        "dockerfile": "Dockerfile.dev",
-        "context": ".."
-    },
-    "mounts": [
-        "source=/var/lib/rancher/k3s/storage/pvc-47396694-6455-48c0-9353-ea4f53661635_default_efs-claim,target=/webapp/myapp/media/user_osm_files,type=bind,consistency=cached",
-        // Mount source code for live editing
-        "source=${localWorkspaceFolder},target=/webapp,type=bind,consistency=cached",
-        // Mount Docker socket for Telepresence (if needed)
-        "source=/var/run/docker.sock,target=/var/run/docker.sock,type=bind",
-        // Mount kubectl config 
-        "source=${localEnv:HOME}/.kube,target=/root/.kube,type=bind,consistency=cached",
-        // For github auth
-        "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,consistency=cached"
-
-    ],
-    "workspaceFolder": "/webapp",
-    "containerEnv": {
-        "PYTHONPATH": "/webapp"
-    },
-    "runArgs": [
-        "--network=host",
-        "--privileged",
-        "--env-file=.devcontainer/.env"
-    ],
-    "customizations": {
-        "vscode": {
-            "extensions": [
-                "ms-python.python",
-                "ms-python.debugpy",
-                "ms-python.pylint",
-                "ms-python.black-formatter",
-                "ms-vscode.vscode-json"
-            ],
-            "settings": {
-                "python.defaultInterpreterPath": "/usr/local/bin/python",
-                "python.terminal.activateEnvironment": false,
-                "python.formatting.provider": "black"
-            }
-        }
-    },
-    "remoteUser": "root",
-    "features": {
-        "ghcr.io/devcontainers/features/kubectl-helm-minikube:1": {
-            "version": "latest"
-        }
-    }
+  "name": "isochrone-dev",
+  "build": { "dockerfile": "../docker/Dockerfile.dev", "context": ".." },
+  "runArgs": ["--network=host"],
+  "mounts": [
+    "source=${localEnv:HOME}/.kube,target=/root/.kube,type=bind,readonly"
+  ],
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind"
 }
-
-
-// this is all inside .devcontaier, so a custom development image can be span, inherited from the prod dockerfile
-// so development can be done within the container on live code for git and instant changes
-// telepresence will also be used so it can connect to the existing services within the cluster so you can test the full functionality
-
-// inherit the dockerfile
-//  for the dockerfile, mount the code instead of copying it, for live code editing
-// use telepresence to connect to the cluster and use the services of the existing django pod 
-
-// nathan@dev-server:~/Custom-Isochrone-Generator$ sudo kubectl get pods
-// NAME                             READY   STATUS    RESTARTS      AGE
-// celery-beat-7b4cc646f-zdzcm      1/1     Running   9 (20m ago)   19h
-// celery-worker-d767b44b7-5kh74    1/1     Running   2 (21m ago)   19h
-// my-django-app-5b6cd9b7bb-5lb92   1/1     Running   6 (20m ago)   19h
-// postgres-7457f47555-bbsq4        1/1     Running   2 (21m ago)   19h
-// redis-86d774df89-m29zk           1/1     Running   2 (21m ago)   19h
-// nathan@dev-server:~/Custom-Isochrone-Generator$ 
-
-
-
-// need to run container as root for telepresence to work . have a different dockerfile.dev . a development cluster and production cluster?
-
-// the deployment yaml needs a flag to use the development image instead of latest. 
-
-// telepresence connect
-
-// telepresence intercept my-django-app --port 8000:8000
-
-//  psql -h $DB_HOST -U $DB_USER -d $DB_NAME -p $DB_PORT
-
-// python manage.py runserver 0.0.0.0:8000
-
-// telepresence leave my-django-app --namespace default
-
-// telepresence quit
-
-//  problem - graphhopper cannot see the osm file
-// java.lang.IllegalStateException: Your specified OSM file does not exist:/webapp/myapp/media/user_osm_files/1.osm
-
-// will have to change the path for celery cleanup of osm files too 

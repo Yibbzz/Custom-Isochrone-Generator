@@ -1,0 +1,29 @@
+# Dev overrides:  helm upgrade --install isochrone-dev ./isochrone-app -f isochrone-app/values-dev.yaml
+
+image:
+  registry: k3d-k3d-registry.localhost:5000
+  repository: isochrone-app
+  tag: development
+
+django:
+  djangoEnv: ""
+  initPermissionsCommand: "chmod -R 777 /webapp/myapp/media/user_osm_files"
+  # Dev runs without the pod-level UID/GID pinning (matches django-dev.yaml)
+  podSecurityContext: {}
+  containerSecurityContext:
+    allowPrivilegeEscalation: true
+    capabilities:
+      add: ["NET_ADMIN", "NET_RAW"]
+    readOnlyRootFilesystem: false
+
+ingress:
+  host: custom-isochrones.local
+  entrypoint: web
+  tls: false
+
+# Not used in the local k3d dev cluster
+cloudflared:
+  enabled: false
+
+metallb:
+  enabled: false

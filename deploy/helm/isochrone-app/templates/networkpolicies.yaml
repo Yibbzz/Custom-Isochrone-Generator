@@ -1,0 +1,207 @@
+{{- if .Values.networkPolicies.enabled }}
+# Default Deny-All
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+---
+# PostgreSQL: allow ingress from Django, Celery worker, Celery beat
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-policy
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: my-django-app
+        - podSelector:
+            matchLabels:
+              app: celery-worker
+        - podSelector:
+            matchLabels:
+              app: celery-beat
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Celery -> Django
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: celery-django-policy
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: my-django-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: celery-worker
+        - podSelector:
+            matchLabels:
+              app: celery-beat
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# PostgreSQL egress restriction
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-egress-restrict
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: my-django-app
+        - podSelector:
+            matchLabels:
+              app: celery-worker
+        - podSelector:
+            matchLabels:
+              app: celery-beat
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Redis: allow ingress from celery
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: redis-policy
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: redis
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: celery-beat
+        - podSelector:
+            matchLabels:
+              app: celery-worker
+      ports:
+        - protocol: TCP
+          port: 6379
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: graphhopper-django
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: graphhopper
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: my-django-app
+      ports:
+        - protocol: TCP
+          port: 8989
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: my-django-app
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: django-graphhopper
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: my-django-app
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: graphhopper
+      ports:
+        - protocol: TCP
+          port: 8000
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: graphhopper
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres
+    - to:
+        - ipBlock:
+            cidr: 10.43.0.10/12
+    - to:
+        - podSelector:
+            matchLabels:
+              app: celery-worker
+    - to:
+        - podSelector:
+            matchLabels:
+              app: celery-beat
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-django-from-cloudflared
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  podSelector:
+    matchLabels:
+      app: my-django-app
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: cloudflared
+      ports:
+        - protocol: TCP
+          port: 8000
+{{- end }}

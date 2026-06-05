@@ -1,0 +1,72 @@
+{{- if .Values.cloudflared.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: {{ .Values.cloudflared.namespace }}
+  labels:
+    app: cloudflared
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cloudflared
+  template:
+    metadata:
+      labels:
+        app: cloudflared
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: cloudflared
+          image: {{ .Values.cloudflared.image }}
+          args:
+            - tunnel
+            - run
+            - {{ .Values.cloudflared.tunnelId }}
+          env:
+            - name: TUNNEL_CRED_FILE
+              value: /etc/cloudflared/credentials/tunnel.json
+            - name: TUNNEL_ORIGIN_CERT
+              value: /etc/cloudflared/certs/cert.pem
+          volumeMounts:
+            - name: tunnel-credentials
+              mountPath: /etc/cloudflared/credentials
+              readOnly: true
+            - name: cloudflared-origin-cert
+              mountPath: /etc/cloudflared/certs
+              readOnly: true
+            - name: cloudflared-config
+              mountPath: /etc/cloudflared/config.yml
+              subPath: config.yml
+              readOnly: true
+      volumes:
+        - name: tunnel-credentials
+          secret:
+            secretName: cloudflared-credentials
+        - name: cloudflared-origin-cert
+          secret:
+            secretName: cloudflared-origin-cert
+        - name: cloudflared-config
+          configMap:
+            name: cloudflared-config
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cloudflared-config
+  namespace: {{ .Values.cloudflared.namespace }}
+data:
+  config.yml: |
+    tunnel: {{ .Values.cloudflared.tunnelId }}
+    credentials-file: /etc/cloudflared/tunnel.json
+    ingress:
+    {{- range .Values.cloudflared.hostnames }}
+      - hostname: {{ . }}
+        service: {{ $.Values.cloudflared.service }}
+    {{- end }}
+      - service: http_status:404
+{{- end }}

@@ -1,0 +1,15 @@
+{
+  "target": { "deployment": "my-django-app", "container": "my-django-app" },
+  "feature": {
+    "env": true,
+    "network": {
+      "incoming": "off",         
+      "outgoing": true            
+    },
+    "fs": {
+      "mode": "localwithoverrides",
+      "read_write": ["^/webapp/myapp/media/user_osm_files/.*"],  
+      "read_only":  ["^/var/run/secrets/kubernetes\\.io/.*"]      
+    }
+  }
+}

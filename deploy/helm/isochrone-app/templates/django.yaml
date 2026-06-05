@@ -1,0 +1,113 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: django-app-role
+  namespace: {{ include "isochrone.ns" . }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services"]
+    verbs: ["get", "watch", "list", "create", "update", "patch", "delete"]
+  - apiGroups: ["apps", "extensions"]
+    resources: ["deployments"]
+    verbs: ["get", "list", "create", "update", "patch", "delete", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: django-app-rolebinding
+  namespace: {{ include "isochrone.ns" . }}
+subjects:
+  - kind: ServiceAccount
+    name: django-app-service-account
+    namespace: {{ include "isochrone.ns" . }}
+roleRef:
+  kind: Role
+  name: django-app-role
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: django-app-service-account
+  namespace: {{ include "isochrone.ns" . }}
+automountServiceAccountToken: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: my-django-app
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  replicas: {{ .Values.django.replicas }}
+  selector:
+    matchLabels:
+      app: my-django-app
+  template:
+    metadata:
+      labels:
+        app: my-django-app
+    spec:
+      serviceAccountName: django-app-service-account
+      securityContext:
+        {{- toYaml .Values.django.podSecurityContext | nindent 8 }}
+      initContainers:
+        - name: init-permissions
+          image: busybox:1.33.1
+          command: ["sh", "-c", {{ .Values.django.initPermissionsCommand | quote }}]
+          volumeMounts:
+            - name: osm-volume
+              mountPath: /webapp/myapp/media/user_osm_files
+          securityContext:
+            runAsUser: 0
+            runAsGroup: 0
+      containers:
+        - name: my-django-app
+          image: {{ include "isochrone.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - containerPort: 8000
+          volumeMounts:
+            - name: osm-volume
+              mountPath: /webapp/myapp/media/user_osm_files
+            - name: migrations-volume
+              mountPath: /webapp/myapp/migrations
+            - name: temp-volume
+              mountPath: /webapp/myapp/temp
+          env:
+            {{- include "isochrone.dbEnv" . | nindent 12 }}
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: django-secret
+                  key: DJANGO_SECRET_KEY
+            - name: IMAGE
+              value: {{ .Values.graphhopperImage | quote }}
+            - name: TMPDIR
+              value: "/webapp/myapp/temp"
+            - name: DJANGO_ENV
+              value: {{ .Values.django.djangoEnv | quote }}
+            - name: ACCESS_CODE
+              value: {{ .Values.django.accessCode | quote }}
+          securityContext:
+            {{- toYaml .Values.django.containerSecurityContext | nindent 12 }}
+      volumes:
+        - name: osm-volume
+          persistentVolumeClaim:
+            claimName: efs-claim
+        - name: migrations-volume
+          emptyDir: {}
+        - name: temp-volume
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: django-service
+  namespace: {{ include "isochrone.ns" . }}
+spec:
+  ports:
+    - protocol: TCP
+      port: 8000
+      targetPort: 8000
+  selector:
+    app: my-django-app
