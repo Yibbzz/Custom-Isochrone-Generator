@@ -1,0 +1,430 @@
+---
+# =============================================================================
+# Stand up a DEV instance of the Custom Isochrone Generator on a fresh VM.
+#
+#   ansible-playbook -i inventory.ini playbook.yml
+#
+# Tags let you re-run a slice:
+#   ... --tags deps          # just install tooling
+#   ... --tags images,deploy # rebuild + redeploy
+#   ... --skip-tags mirrord  # everything except the local dev-loop config
+# =============================================================================
+- name: Provision Isochrone dev stack
+  hosts: isochrone_dev
+  gather_facts: true
+
+  vars:
+    # arch + distro plumbing for the apt repos
+    deb_arch: "{{ 'arm64' if ansible_architecture == 'aarch64' else 'amd64' }}"
+    docker_distro: "{{ 'debian' if ansible_distribution == 'Debian' else 'ubuntu' }}"
+
+  tasks:
+
+    # -------------------------------------------------------------------------
+    # 1. BASE PACKAGES + APT KEYRINGS
+    # -------------------------------------------------------------------------
+    - name: Install prerequisite packages
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - git
+          - git-lfs
+          - gnupg
+          - apt-transport-https
+        state: present
+        update_cache: true
+      become: true
+      tags: deps
+
+    - name: Ensure /etc/apt/keyrings exists
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+      become: true
+      tags: deps
+
+    # -------------------------------------------------------------------------
+    # 2. DOCKER  (build/push/load images, and k3d's runtime)
+    # -------------------------------------------------------------------------
+    - name: Add Docker GPG key
+      ansible.builtin.get_url:
+        url: "https://download.docker.com/linux/{{ docker_distro }}/gpg"
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+      become: true
+      tags: deps
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [arch={{ deb_arch }} signed-by=/etc/apt/keyrings/docker.asc]
+          https://download.docker.com/linux/{{ docker_distro }}
+          {{ ansible_distribution_release }} stable
+        filename: docker
+        state: present
+      become: true
+      tags: deps
+
+    - name: Install Docker Engine
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+      become: true
+      tags: deps
+
+    - name: Enable and start Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+      become: true
+      tags: deps
+
+    # The k3d registry serves plain HTTP. Docker only auto-trusts the literal
+    # "localhost"/127.0.0.0/8 — NOT a hostname that resolves to loopback — so
+    # the registry host must be declared insecure explicitly.
+    # NOTE: this writes daemon.json wholesale. Fine on a fresh VM; if you have
+    # existing daemon.json settings, merge this key in by hand instead.
+    - name: Configure Docker insecure registry
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ k3d_registry_host }}:{{ k3d_registry_port }}"]
+          }
+      become: true
+      notify: Restart Docker
+      tags: deps
+
+    - name: Apply Docker daemon config now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Add the login user to the docker group
+      ansible.builtin.user:
+        name: "{{ ansible_user_id }}"
+        groups: docker
+        append: true
+      become: true
+      tags: deps
+
+    # New group membership isn't active in the current SSH session; force a
+    # fresh connection so subsequent `docker`/`k3d` calls work without sudo.
+    - name: Reset connection so the docker group takes effect
+      ansible.builtin.meta: reset_connection
+
+    # -------------------------------------------------------------------------
+    # 3. KUBECTL  (pkgs.k8s.io)
+    # -------------------------------------------------------------------------
+    - name: Download Kubernetes apt signing key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/{{ kubectl_channel }}/deb/Release.key"
+        dest: /tmp/kubernetes-release.key
+        mode: "0644"
+      become: true
+      tags: deps
+
+    - name: Dearmor Kubernetes signing key
+      ansible.builtin.command: >-
+        gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+        /tmp/kubernetes-release.key
+      args:
+        creates: /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+      become: true
+      tags: deps
+
+    - name: Add Kubernetes apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg]
+          https://pkgs.k8s.io/core:/stable:/{{ kubectl_channel }}/deb/ /
+        filename: kubernetes
+        state: present
+      become: true
+      tags: deps
+
+    - name: Install kubectl
+      ansible.builtin.apt:
+        name: kubectl
+        state: present
+        update_cache: true
+      become: true
+      tags: deps
+
+    # -------------------------------------------------------------------------
+    # 4. HELM  (official get-helm-3 install script -> /usr/local/bin/helm)
+    #    Avoids the baltocdn apt signing-key fetch, which can return a
+    #    non-PGP body and break `gpg --dearmor`.
+    # -------------------------------------------------------------------------
+    - name: Check for helm
+      ansible.builtin.command: which helm
+      register: helm_which
+      changed_when: false
+      failed_when: false
+      tags: deps
+
+    - name: Install Helm via get-helm-3
+      ansible.builtin.shell: >-
+        curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+      args:
+        executable: /bin/bash
+      become: true
+      when: helm_which.rc != 0
+      tags: deps
+
+    # -------------------------------------------------------------------------
+    # 5. k3d + mirrord  (install scripts)
+    # -------------------------------------------------------------------------
+    - name: Check for k3d
+      ansible.builtin.command: which k3d
+      register: k3d_which
+      changed_when: false
+      failed_when: false
+      tags: deps
+
+    - name: Install k3d
+      ansible.builtin.shell: >-
+        curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+      args:
+        executable: /bin/bash
+      become: true
+      when: k3d_which.rc != 0
+      tags: deps
+
+    - name: Check for mirrord
+      ansible.builtin.command: which mirrord
+      register: mirrord_which
+      changed_when: false
+      failed_when: false
+      tags: [deps, mirrord]
+
+    - name: Install mirrord
+      ansible.builtin.shell: >-
+        curl -fsSL https://raw.githubusercontent.com/metalbear-co/mirrord/main/scripts/install.sh | bash
+      args:
+        executable: /bin/bash
+      become: true
+      when: mirrord_which.rc != 0
+      tags: [deps, mirrord]
+
+    # -------------------------------------------------------------------------
+    # 6. HOSTS ENTRIES
+    #    Both the registry host and the ingress host resolve to loopback on a
+    #    single dev VM. Loopback also makes Docker treat the registry as an
+    #    insecure (HTTP) registry automatically — no daemon.json needed.
+    # -------------------------------------------------------------------------
+    - name: Map registry + ingress hosts to loopback
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "127.0.0.1 {{ item }}"
+        state: present
+      become: true
+      loop:
+        - "{{ k3d_registry_host }}"
+        - "{{ ingress_host }}"
+      tags: [deps, deploy]
+
+    # -------------------------------------------------------------------------
+    # 7. CLONE THE REPO
+    #    graphhopper.tar.gz is stored in Git LFS, so we must initialise LFS
+    #    filters before cloning and explicitly pull the objects after — a plain
+    #    clone only fetches the tiny LFS pointer file, which breaks docker load.
+    # -------------------------------------------------------------------------
+    - name: Initialise git-lfs for the user
+      ansible.builtin.command: git lfs install
+      changed_when: false
+      tags: repo
+
+    - name: Clone the application repository
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dest }}"
+        version: "{{ git_version }}"
+        update: true
+      tags: repo
+
+    - name: Pull Git LFS objects
+      ansible.builtin.command: git lfs pull
+      args:
+        chdir: "{{ repo_dest }}"
+      changed_when: false
+      tags: repo
+
+    # -------------------------------------------------------------------------
+    # 8. k3d REGISTRY + CLUSTER
+    # -------------------------------------------------------------------------
+    - name: List existing k3d registries
+      ansible.builtin.command: k3d registry list -o json
+      register: k3d_reg_list
+      changed_when: false
+      failed_when: false
+      tags: cluster
+
+    - name: Create k3d registry
+      ansible.builtin.command: >-
+        k3d registry create {{ k3d_registry_create_name }} --port {{ k3d_registry_port }}
+      when: k3d_registry_host not in (k3d_reg_list.stdout | default(''))
+      tags: cluster
+
+    - name: List existing k3d clusters
+      ansible.builtin.command: k3d cluster list -o json
+      register: k3d_cluster_list
+      changed_when: false
+      failed_when: false
+      tags: cluster
+
+    - name: Create k3d cluster (wired to the registry, LB on host port)
+      ansible.builtin.command: >-
+        k3d cluster create {{ k3d_cluster_name }}
+        --registry-use {{ k3d_registry_host }}:{{ k3d_registry_port }}
+        -p "{{ k3d_lb_http_port }}:80@loadbalancer"
+      when: >-
+        k3d_cluster_name not in (k3d_cluster_list.stdout | default(''))
+      tags: cluster
+
+    - name: Confirm kubectl is on the dev context
+      ansible.builtin.command: kubectl config current-context
+      register: kube_ctx
+      changed_when: false
+      tags: cluster
+
+    - name: Fail if not pointed at the k3d dev context
+      ansible.builtin.assert:
+        that: kube_ctx.stdout == 'k3d-' ~ k3d_cluster_name
+        fail_msg: >-
+          Expected context 'k3d-{{ k3d_cluster_name }}' but found
+          '{{ kube_ctx.stdout }}'. dev-secrets.sh and helm target the wrong
+          cluster otherwise.
+      tags: cluster
+
+    # -------------------------------------------------------------------------
+    # 9. BUILD + PUSH IMAGES
+    # -------------------------------------------------------------------------
+    - name: Build the dev app image
+      ansible.builtin.command: docker build -f docker/Dockerfile.dev -t {{ app_image }} .
+      args:
+        chdir: "{{ repo_dest }}"
+      tags: images
+
+    - name: Push the dev app image
+      ansible.builtin.command: docker push {{ app_image }}
+      tags: images
+
+    - name: Load graphhopper image from tarball
+      ansible.builtin.command: docker load -i {{ graphhopper_tarball }}
+      args:
+        chdir: "{{ repo_dest }}"
+      register: gh_load
+      changed_when: "'Loaded image' in gh_load.stdout"
+      tags: images
+
+    # The tarball's internal image name isn't guaranteed to be
+    # "graphhopper:latest", so read whatever `docker load` reported.
+    # Handles both "Loaded image: name:tag" and "Loaded image ID: sha256:...".
+    - name: Determine the loaded graphhopper image reference
+      ansible.builtin.set_fact:
+        gh_loaded_ref: >-
+          {{ (gh_load.stdout | regex_search('Loaded image(?: ID)?:\s*(.+)', '\1') | first | trim) }}
+      tags: images
+
+    - name: Show what was loaded
+      ansible.builtin.debug:
+        msg: "Loaded graphhopper as: {{ gh_loaded_ref }}"
+      tags: images
+
+    - name: Tag graphhopper for the registry
+      ansible.builtin.command: docker tag {{ gh_loaded_ref }} {{ graphhopper_remote_image }}
+      tags: images
+
+    - name: Push graphhopper image
+      ansible.builtin.command: docker push {{ graphhopper_remote_image }}
+      tags: images
+
+    # -------------------------------------------------------------------------
+    # 10. SECRETS  (script self-guards on the k3d context)
+    # -------------------------------------------------------------------------
+    - name: Make dev-secrets.sh executable
+      ansible.builtin.file:
+        path: "{{ repo_dest }}/scripts/dev-secrets.sh"
+        mode: "0755"
+      tags: secrets
+
+    - name: Generate in-cluster dev secrets
+      ansible.builtin.command: ./scripts/dev-secrets.sh
+      args:
+        chdir: "{{ repo_dest }}"
+      tags: secrets
+
+    - name: Verify the chart's secrets exist
+      ansible.builtin.command: kubectl get secret postgres-secret django-secret -n default
+      changed_when: false
+      tags: secrets
+
+    # -------------------------------------------------------------------------
+    # 11. DEPLOY THE HELM CHART
+    # -------------------------------------------------------------------------
+    - name: Deploy the dev Helm release
+      ansible.builtin.command: >-
+        helm upgrade --install {{ helm_release }} ./deploy/helm/isochrone-app
+        -f ./deploy/helm/isochrone-app/values-dev.yaml
+      args:
+        chdir: "{{ repo_dest }}"
+      tags: deploy
+
+    # -------------------------------------------------------------------------
+    # 12. mirrord CONFIG  (section-9 instant-reload loop)
+    # -------------------------------------------------------------------------
+    - name: Create .mirrord directory
+      ansible.builtin.file:
+        path: "{{ repo_dest }}/.mirrord"
+        state: directory
+        mode: "0755"
+      tags: mirrord
+
+    - name: Drop in mirrord.json
+      ansible.builtin.copy:
+        src: files/mirrord.json
+        dest: "{{ repo_dest }}/.mirrord/mirrord.json"
+        mode: "0644"
+      tags: mirrord
+
+    # -------------------------------------------------------------------------
+    # 13. VERIFY
+    # -------------------------------------------------------------------------
+    - name: Wait for the Django deployment to roll out
+      ansible.builtin.command: >-
+        kubectl rollout status deployment/my-django-app --timeout=300s
+      changed_when: false
+      tags: deploy
+
+    - name: Snapshot cluster state
+      ansible.builtin.command: kubectl get pods,svc,ingress -n default
+      register: cluster_state
+      changed_when: false
+      tags: deploy
+
+    - name: Show how to reach the app
+      ansible.builtin.debug:
+        msg:
+          - "Cluster state:"
+          - "{{ cluster_state.stdout_lines }}"
+          - ""
+          - "Browse:  http://{{ ingress_host }}"
+          - "Dev loop (from {{ repo_dest }}):"
+          - "  mirrord exec -f .mirrord/mirrord.json -- python manage.py runserver 0.0.0.0:8800"
+      tags: deploy
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.service:
+        name: docker
+        state: restarted
+      become: true

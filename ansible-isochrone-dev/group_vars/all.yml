@@ -1,0 +1,37 @@
+# =============================================================================
+# Variables for the Isochrone dev stack
+# Override any of these with -e on the command line if needed.
+# =============================================================================
+
+# --- Repo ---------------------------------------------------------------------
+repo_url: "https://github.com/Yibbzz/Custom-Isochrone-Generator.git"
+git_version: "development"                      # branch / tag / commit to check out
+# Cloned into the login user's home dir:
+repo_dest: "/home/{{ ansible_user_id }}/Custom-Isochrone-Generator"
+
+# --- k3d cluster + registry ---------------------------------------------------
+# NOTE on the double "k3d-": k3d prefixes every registry name with "k3d-".
+# We create it as "k3d-registry.localhost", so the resolvable host becomes
+# "k3d-k3d-registry.localhost" — which is exactly what your build/push/helm
+# values reference. Don't "fix" the name unless you also change those.
+k3d_cluster_name: "k3d-cluster-1"                 # context becomes k3d-k3d-cluster-1
+k3d_registry_create_name: "k3d-registry.localhost"
+k3d_registry_host: "k3d-k3d-registry.localhost"   # resolvable host after prefixing
+k3d_registry_port: 5000
+# Host port the k3d loadbalancer (Traefik) is published on. Must be free.
+k3d_lb_http_port: 80
+
+# --- Images -------------------------------------------------------------------
+app_image: "{{ k3d_registry_host }}:{{ k3d_registry_port }}/isochrone-app:development"
+graphhopper_tarball: "graphhopper.tar.gz"          # relative to repo root
+# Image name as printed by `docker load` ("Loaded image: <this>"). Adjust if
+# your tarball loads under a different name.
+graphhopper_local_image: "graphhopper:latest"
+graphhopper_remote_image: "{{ k3d_registry_host }}:{{ k3d_registry_port }}/graphhopper:latest"
+
+# --- App access ---------------------------------------------------------------
+ingress_host: "custom-isochrones.local"
+helm_release: "isochrone-dev"
+
+# --- Tool versions ------------------------------------------------------------
+kubectl_channel: "v1.30"                 # pkgs.k8s.io minor stream

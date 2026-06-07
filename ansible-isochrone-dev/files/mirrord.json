@@ -1,0 +1,12 @@
+{
+  "target": {
+    "deployment": "my-django-app"
+  },
+  "feature": {
+    "network": {
+      "incoming": "mirror"
+    },
+    "fs": "read",
+    "env": true
+  }
+}
