@@ -30,6 +30,14 @@ steps:
       - export REG=192.168.0.202:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
+  - name: debug-secret
+    image: alpine:latest
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - echo "token length=$(echo -n $GITHUB_TOKEN | wc -c)"
+
   - name: bump-tag-and-commit
     image: alpine:latest
     environment:
