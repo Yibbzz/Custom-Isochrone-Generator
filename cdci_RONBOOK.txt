@@ -1,0 +1,256 @@
+# CI/CD Stack Runbook — Woodpecker + Buildah + Trivy + Gitleaks + ArgoCD
+
+Source: GitHub public repo `Yibbzz/Custom-Isochrone-Generator`, branch `development`.
+
+**Division of labour**
+- **Woodpecker** = CI. Triggered by a push, runs: gitleaks → (tests) → buildah build+push → trivy. If every gate passes, it bumps the image tag in `values-dev.yaml` and commits it back to git.
+- **ArgoCD** = CD. Watches the Helm chart in git and syncs the cluster to match. Picks up the new tag automatically.
+
+**Data flow**
+
+    push to development
+        -> GitHub webhook -> Woodpecker pipeline (gitleaks, test, build+push, trivy)
+        -> on pass: commit "image.tag = <sha> [skip ci]" back to development
+        -> ArgoCD detects manifest change -> syncs cluster -> pods roll to new image
+
+Woodpecker never talks to the cluster API. ArgoCD never builds. Git is the only handoff.
+
+Registries (plain HTTP, no TLS):
+- DEV  : reach via LAN IP from inside the cluster -> 192.168.0.202:5000
+- (the k3d ".localhost" alias does NOT resolve inside pods — always use the IP/Service)
+
+===============================================================================
+0. PREREQUISITES
+===============================================================================
+- A running cluster with kubectl context set.
+- cloudflared (Cloudflare Tunnel) available to expose the Woodpecker server
+  publicly (needed for GitHub OAuth callback + webhooks).
+- helm installed.
+- A GitHub PAT (classic, `repo` scope) for the pipeline's tag-bump push.
+
+===============================================================================
+1. REGISTER A GITHUB OAUTH APP (Woodpecker <-> GitHub auth)
+===============================================================================
+GitHub -> Settings -> Developer settings -> OAuth Apps -> New OAuth App
+  - Application name : Woodpecker
+  - Homepage URL     : https://woodpecker.<your-tunnel-domain>
+  - Callback URL     : https://woodpecker.<your-tunnel-domain>/authorize
+Save the Client ID and Client Secret — they go into the Woodpecker server config.
+
+===============================================================================
+2. EXPOSE WOODPECKER VIA CLOUDFLARE TUNNEL
+===============================================================================
+Add a tunnel ingress rule mapping a public hostname to the in-cluster
+Woodpecker server service (created in step 3), e.g.:
+    hostname: woodpecker.<your-tunnel-domain>
+    service : http://woodpecker-server.woodpecker.svc.cluster.local:80
+WOODPECKER_HOST (step 3) MUST equal this public URL, or OAuth + webhooks break.
+
+===============================================================================
+3. INSTALL WOODPECKER (server + agent, kubernetes backend)
+===============================================================================
+Woodpecker ships an official Helm chart. Grab the current chart reference from
+https://woodpecker-ci.org/docs/administration/getting-started
+(published as an OCI chart at time of writing).
+
+# --- shared secret between server and agent ---
+export AGENT_SECRET=$(openssl rand -hex 32)
+
+# --- values-woodpecker.yaml (sketch) ---
+# server:
+#   env:
+#     WOODPECKER_HOST: "https://woodpecker.<your-tunnel-domain>"
+#     WOODPECKER_GITHUB: "true"
+#     WOODPECKER_GITHUB_CLIENT: "<oauth client id>"
+#     WOODPECKER_GITHUB_SECRET: "<oauth client secret>"
+#     WOODPECKER_AGENT_SECRET: "<AGENT_SECRET>"
+#     WOODPECKER_ADMIN: "Yibbzz"          # your GitHub login = admin
+#     WOODPECKER_OPEN: "false"            # don't allow arbitrary signups
+#   persistentVolume:
+#     enabled: true                       # sqlite db survives restarts
+# agent:
+#   env:
+#     WOODPECKER_BACKEND: "kubernetes"
+#     WOODPECKER_BACKEND_K8S_NAMESPACE: "woodpecker"
+#     WOODPECKER_AGENT_SECRET: "<AGENT_SECRET>"
+#   # the chart provisions the ServiceAccount + RBAC the agent needs to
+#   # create step pods / the per-pipeline PVC in the woodpecker namespace.
+
+helm install woodpecker <official-woodpecker-chart-ref> \
+  --namespace woodpecker --create-namespace \
+  -f values-woodpecker.yaml
+
+# SQLite is fine for a homelab. Switch to Postgres (WOODPECKER_DATABASE_DRIVER=postgres)
+# only if you outgrow it.
+
+===============================================================================
+4. ACTIVATE THE REPO + CONFIGURE IT (do this in the Woodpecker UI)
+===============================================================================
+1. Log in at https://woodpecker.<your-tunnel-domain> via GitHub OAuth.
+2. Repositories -> enable `Custom-Isochrone-Generator`.
+   (This registers the webhook on the GitHub repo automatically.)
+3. Repo Settings:
+   - **Trusted: ON**  <-- REQUIRED for privileged steps (buildah). See note in §6.
+   - **Allow Pull Requests: OFF**  <-- SECURITY: stops fork PRs from running the
+     privileged pipeline on your cluster. Only your own pushes should build.
+4. Repo Secrets -> add:
+   - name: github_token   value: <your PAT with repo scope>   (used by the bump step)
+   - (only if your registry needs auth) registry creds as further secrets.
+
+===============================================================================
+5. PREP THE HELM CHART FOR TAG BUMPING
+===============================================================================
+Ensure deploy/helm/isochrone-app/values-dev.yaml has an editable image tag:
+
+    image:
+      repository: 192.168.0.202:5000/isochrone-app
+      tag: "development"     # the pipeline overwrites this each successful build
+
+===============================================================================
+6. THE PIPELINE  (commit as .woodpecker.yml in the repo root)
+===============================================================================
+Steps run serially; any non-zero exit aborts the pipeline, so a failing gate
+(gitleaks/trivy) stops execution BEFORE the tag bump — meaning a bad build never
+reaches ArgoCD and the currently-deployed version stays put.
+
+```yaml
+when:
+  - event: push
+    branch: development          # only your pushes; never PRs
+
+steps:
+  - name: gitleaks
+    image: ghcr.io/gitleaks/gitleaks:latest
+    commands:
+      - gitleaks detect --source . --redact -v
+
+  # - name: test               # uncomment when you want tests gating deploys
+  #   image: python:3.12
+  #   commands:
+  #     - pip install -r requirements.txt
+  #     - python manage.py test
+  #   # add a postgres service block if your tests need a DB (see Woodpecker
+  #   # "service containers" docs)
+
+  - name: build-and-push
+    image: quay.io/buildah/stable
+    privileged: true
+    backend_options:
+      kubernetes:
+        securityContext:
+          privileged: true
+    environment:
+      STORAGE_DRIVER: vfs        # reliable in-pod; overlay is faster if it works
+    commands:
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - export REG=192.168.0.202:5000
+      - buildah bud -f docker/Dockerfile.dev -t $REG/isochrone-app:$TAG .
+      - buildah push --tls-verify=false $REG/isochrone-app:$TAG   # HTTP registry
+
+  - name: trivy-scan
+    image: aquasec/trivy:latest
+    commands:
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - export REG=192.168.0.202:5000
+      # --insecure: HTTP registry. fail build on HIGH/CRITICAL fixable CVEs.
+      - trivy image --insecure --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
+      # optional extra: scan your IaC/Dockerfiles too
+      # - trivy config --exit-code 1 --severity HIGH,CRITICAL .
+
+  - name: bump-tag-and-commit
+    image: alpine:latest
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - apk add --no-cache git yq
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - yq -i ".image.tag = \"$TAG\"" deploy/helm/isochrone-app/values-dev.yaml
+      - git config user.name  "woodpecker-ci"
+      - git config user.email "ci@bot.local"
+      - git commit -am "deploy $TAG [skip ci]"   # [skip ci] prevents re-trigger loop
+      - git push https://$GITHUB_TOKEN@github.com/Yibbzz/Custom-Isochrone-Generator.git HEAD:development
+```
+
+Notes:
+- Order matters: gitleaks + trivy are GATES placed before the bump. If either
+  fails, no tag bump happens, so ArgoCD never sees a new version.
+- The image does get pushed before the trivy gate. That's fine — an unscanned
+  image sitting in the registry is harmless because it's never *deployed* unless
+  the tag bump runs. If you want to scan BEFORE pushing, do build + trivy + push
+  inside a single step using an image that has both buildah and trivy.
+
+===============================================================================
+7. INSTALL ARGOCD
+===============================================================================
+kubectl create namespace argocd
+kubectl apply -n argocd -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/install.yaml
+
+# initial admin password:
+kubectl -n argocd get secret argocd-initial-admin-secret \
+  -o jsonpath='{.data.password}' | base64 -d ; echo
+
+# (optional) port-forward the UI:
+# kubectl -n argocd port-forward svc/argocd-server 8080:443
+
+===============================================================================
+8. CREATE THE ARGOCD APPLICATION  (kubectl apply -f)
+===============================================================================
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: isochrone-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Yibbzz/Custom-Isochrone-Generator.git
+    targetRevision: development
+    path: deploy/helm/isochrone-app
+    helm:
+      valueFiles: [values-dev.yaml]
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: default
+  syncPolicy:
+    automated:
+      prune: true        # remove resources you delete from the chart
+      selfHeal: true     # actively keep the cluster matching git
+```
+Public repo => ArgoCD reads it with no credentials. With `automated`, ArgoCD
+polls ~every 3 min (or wire a webhook later) — this is the "scan for a new
+commit" behaviour, applied to manifests.
+
+===============================================================================
+9. ONE-TIME CUTOVER (if isochrone-dev already exists from manual helm installs)
+===============================================================================
+Once ArgoCD auto-syncs, IT is the owner of these resources. STOP running
+`helm upgrade`/`helm install` by hand or selfHeal will fight you.
+- On first sync ArgoCD adopts the existing resources; expect a brief OutOfSync
+  then convergence.
+- DATA SAFETY: ArgoCD will not delete postgres-pvc unless the chart stops
+  declaring it. Confirm the PVC is chart-managed and untouched before flipping
+  selfHeal on, so you don't risk the database.
+
+===============================================================================
+10. VERIFY THE LOOP
+===============================================================================
+- Push a trivial change to `development`.
+- Woodpecker UI: pipeline runs gitleaks -> build -> trivy -> bump.
+- Git: a new "deploy <sha> [skip ci]" commit appears (and does NOT re-trigger).
+- ArgoCD UI: isochrone-dev goes OutOfSync -> Syncing -> Synced/Healthy.
+- kubectl get pods: my-django-app rolled to the new image.
+
+===============================================================================
+TROUBLESHOOTING / GOTCHAS
+===============================================================================
+- Pipeline never triggers      -> WOODPECKER_HOST / tunnel / webhook delivery.
+- buildah "permission denied"  -> repo not Trusted, or privileged not set in
+                                  BOTH `privileged: true` and backend_options.
+- buildah storage errors       -> keep STORAGE_DRIVER=vfs; try overlay only after.
+- push/scan TLS errors         -> missing --tls-verify=false (buildah) / --insecure (trivy).
+- registry name won't resolve  -> use 192.168.0.202:5000, not the .localhost alias.
+- infinite pipeline loop       -> the [skip ci] in the bump commit message.
+- ArgoCD keeps reverting you    -> you're still running helm by hand; stop.
+- fork PR ran a build          -> "Allow Pull Requests" must be OFF on the repo.

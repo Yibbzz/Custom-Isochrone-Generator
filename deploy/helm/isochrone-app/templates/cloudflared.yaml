@@ -29,16 +29,20 @@ spec:
             - {{ .Values.cloudflared.tunnelId }}
           env:
             - name: TUNNEL_CRED_FILE
-              value: /etc/cloudflared/credentials/tunnel.json
+              value: /etc/cloudflared/credentials/{{ .Values.cloudflared.credentialsFileName }}
+            {{- if .Values.cloudflared.originCertSecret }}
             - name: TUNNEL_ORIGIN_CERT
               value: /etc/cloudflared/certs/cert.pem
+            {{- end }}
           volumeMounts:
             - name: tunnel-credentials
               mountPath: /etc/cloudflared/credentials
               readOnly: true
+            {{- if .Values.cloudflared.originCertSecret }}
             - name: cloudflared-origin-cert
               mountPath: /etc/cloudflared/certs
               readOnly: true
+            {{- end }}
             - name: cloudflared-config
               mountPath: /etc/cloudflared/config.yml
               subPath: config.yml
@@ -46,10 +50,12 @@ spec:
       volumes:
         - name: tunnel-credentials
           secret:
-            secretName: cloudflared-credentials
+            secretName: {{ .Values.cloudflared.credentialsSecret }}
+        {{- if .Values.cloudflared.originCertSecret }}
         - name: cloudflared-origin-cert
           secret:
-            secretName: cloudflared-origin-cert
+            secretName: {{ .Values.cloudflared.originCertSecret }}
+        {{- end }}
         - name: cloudflared-config
           configMap:
             name: cloudflared-config
@@ -62,11 +68,11 @@ metadata:
 data:
   config.yml: |
     tunnel: {{ .Values.cloudflared.tunnelId }}
-    credentials-file: /etc/cloudflared/tunnel.json
+    credentials-file: /etc/cloudflared/credentials/{{ .Values.cloudflared.credentialsFileName }}
     ingress:
-    {{- range .Values.cloudflared.hostnames }}
-      - hostname: {{ . }}
-        service: {{ $.Values.cloudflared.service }}
+    {{- range .Values.cloudflared.ingress }}
+      - hostname: {{ .hostname }}
+        service: {{ .service }}
     {{- end }}
       - service: http_status:404
 {{- end }}

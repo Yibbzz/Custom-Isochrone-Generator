@@ -21,9 +21,23 @@ ingress:
   entrypoint: web
   tls: false
 
-# Not used in the local k3d dev cluster
+# values-dev.yaml
+# values-dev.yaml — cloudflared block
 cloudflared:
-  enabled: false
+  enabled: true
+  namespace: cloudflared
+  tunnelId: c56f06bf-b587-465e-9454-f9e7bd841771
+  credentialsSecret: cloudflared-dev-creds
+  credentialsFileName: credentials.json
+  originCertSecret: ""
+  ingress:
+    - { hostname: woodpecker-dev.geogsocfcform.top, service: "http://woodpecker-server.woodpecker.svc.cluster.local:80" }
 
 metallb:
   enabled: false
+
+woodpecker:
+  enabled: true
+  host: https://woodpecker-dev.geogsocfcform.top
+  adminUser: Yibbzz            # your GitHub login (the repo owner) = the admin
+  githubClient: Ov23liKOQhErV2AzW4PT

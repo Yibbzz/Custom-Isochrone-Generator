@@ -1,0 +1,21 @@
+GitHub Push
+    |
+Woodpecker
+    |
+Build Image
+    |
+Run Security Scans
+    |
+Deploy to Temporary Namespace
+    |
+Run Integration Tests
+    |
+PASS? -----------------> NO -> Fail Pipeline
+    |
+   YES
+    |
+Update GitOps Repo
+    |
+ArgoCD Syncs
+    |
+Deploy to Production Namespace

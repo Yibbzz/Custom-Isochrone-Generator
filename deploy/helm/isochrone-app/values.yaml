@@ -70,10 +70,12 @@ cloudflared:
   namespace: kube-system
   image: cloudflare/cloudflared:latest
   tunnelId: e6b3745d-4094-4923-8093-8f6c20d98536
-  service: http://django-service.default.svc.cluster.local:8000
-  hostnames:
-    - custom-isochrones.co.uk
-    - www.custom-isochrones.co.uk
+  credentialsSecret: cloudflared-credentials
+  credentialsFileName: tunnel.json
+  originCertSecret: cloudflared-origin-cert
+  ingress:
+    - { hostname: custom-isochrones.co.uk,     service: "http://django-service.default.svc.cluster.local:8000" }
+    - { hostname: www.custom-isochrones.co.uk, service: "http://django-service.default.svc.cluster.local:8000" }
 
 metallb:
   enabled: true
@@ -95,3 +97,23 @@ secrets:
     password: ""
   django:
     secretKey: ""
+
+woodpecker:
+  enabled: false
+  namespace: woodpecker
+  host: ""
+  adminUser: ""
+  githubClient: ""
+  existingSecret: woodpecker-secret
+  server:
+    image: woodpeckerci/woodpecker-server
+    tag: v3.6.0        # pin — check https://github.com/woodpecker-ci/woodpecker/releases for newer
+  agent:
+    image: woodpeckerci/woodpecker-agent
+    tag: v3.6.0
+  storage:
+    className: local-path-retain
+    size: 1Gi
+  backend:
+    namespace: woodpecker
+    storageClass: local-path

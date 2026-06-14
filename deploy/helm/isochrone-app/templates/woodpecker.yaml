@@ -1,0 +1,167 @@
+{{- if .Values.woodpecker.enabled }}
+{{- $wp := .Values.woodpecker }}
+# =====================================================================
+# Woodpecker CI (server + agent, kubernetes backend)
+# Toggle with woodpecker.enabled. Sensitive values come from an EXISTING
+# secret (woodpecker.existingSecret) created out-of-band — NOT from values,
+# because this repo is public.
+# =====================================================================
+---
+# --- ServiceAccount the agent uses to create step pods/PVCs ---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: woodpecker-agent
+  namespace: {{ $wp.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: woodpecker-agent
+  namespace: {{ $wp.backend.namespace }}
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: woodpecker-agent
+  namespace: {{ $wp.backend.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: woodpecker-agent
+subjects:
+  - kind: ServiceAccount
+    name: woodpecker-agent
+    namespace: {{ $wp.namespace }}
+---
+# --- Server state (sqlite). RWO is fine; survives restarts. ---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: woodpecker-server-data
+  namespace: {{ $wp.namespace }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: {{ $wp.storage.className }}
+  resources:
+    requests:
+      storage: {{ $wp.storage.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: woodpecker-server
+  namespace: {{ $wp.namespace }}
+  labels:
+    app: woodpecker-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: woodpecker-server
+  template:
+    metadata:
+      labels:
+        app: woodpecker-server
+    spec:
+      containers:
+        - name: server
+          image: "{{ $wp.server.image }}:{{ $wp.server.tag }}"
+          ports:
+            - { name: http, containerPort: 8000 }
+            - { name: grpc, containerPort: 9000 }
+          env:
+            - name: WOODPECKER_HOST
+              value: {{ $wp.host | quote }}
+            - name: WOODPECKER_GITHUB
+              value: "true"
+            - name: WOODPECKER_GITHUB_CLIENT
+              value: {{ $wp.githubClient | quote }}
+            - name: WOODPECKER_GITHUB_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $wp.existingSecret }}
+                  key: WOODPECKER_GITHUB_SECRET
+            - name: WOODPECKER_AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $wp.existingSecret }}
+                  key: WOODPECKER_AGENT_SECRET
+            - name: WOODPECKER_OPEN
+              value: "false"
+            - name: WOODPECKER_ADMIN
+              value: {{ $wp.adminUser | quote }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/woodpecker
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: woodpecker-server-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: woodpecker-server
+  namespace: {{ $wp.namespace }}
+spec:
+  selector:
+    app: woodpecker-server
+  ports:
+    - { name: http, port: 80,   targetPort: 8000 }   # cloudflared points here
+    - { name: grpc, port: 9000, targetPort: 9000 }   # agent connects here
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: woodpecker-agent
+  namespace: {{ $wp.namespace }}
+  labels:
+    app: woodpecker-agent
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: woodpecker-agent
+  template:
+    metadata:
+      labels:
+        app: woodpecker-agent
+    spec:
+      serviceAccountName: woodpecker-agent
+      containers:
+        - name: agent
+          image: "{{ $wp.agent.image }}:{{ $wp.agent.tag }}"
+          env:
+            - name: WOODPECKER_SERVER
+              value: "woodpecker-server.{{ $wp.namespace }}.svc.cluster.local:9000"
+            - name: WOODPECKER_AGENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $wp.existingSecret }}
+                  key: WOODPECKER_AGENT_SECRET
+            - name: WOODPECKER_BACKEND
+              value: kubernetes
+            - name: WOODPECKER_BACKEND_K8S_NAMESPACE
+              value: {{ $wp.backend.namespace | quote }}
+            - name: WOODPECKER_BACKEND_K8S_STORAGE_CLASS
+              value: {{ $wp.backend.storageClass | quote }}
+            # CRITICAL for k3s/local-path: it is RWO-only. Leaving the default
+            # (true) makes the per-pipeline PVC fail and NO step pod is created.
+            - name: WOODPECKER_BACKEND_K8S_STORAGE_RWX
+              value: "false"
+            - name: WOODPECKER_BACKEND_K8S_VOLUME_SIZE
+              value: "2G"
+            - name: WOODPECKER_MAX_WORKFLOWS
+              value: "1"
+{{- end }}
