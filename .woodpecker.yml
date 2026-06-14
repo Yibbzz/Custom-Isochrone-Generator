@@ -1,0 +1,45 @@
+when:
+  - event: push
+    branch: development
+
+steps:
+  - name: gitleaks
+    image: ghcr.io/gitleaks/gitleaks:latest
+    commands:
+      - gitleaks detect --source . --redact -v
+
+  - name: build-and-push
+    image: quay.io/buildah/stable
+    privileged: true
+    backend_options:
+      kubernetes:
+        securityContext:
+          privileged: true
+    environment:
+      STORAGE_DRIVER: vfs
+    commands:
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - export REG=192.168.0.202:5000
+      - buildah bud -f docker/Dockerfile.dev -t $REG/isochrone-app:$TAG .
+      - buildah push --tls-verify=false $REG/isochrone-app:$TAG
+
+  - name: trivy-scan
+    image: aquasec/trivy:latest
+    commands:
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - export REG=192.168.0.202:5000
+      - trivy image --insecure --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
+
+  - name: bump-tag-and-commit
+    image: alpine:latest
+    environment:
+      GITHUB_TOKEN:
+        from_secret: github_token
+    commands:
+      - apk add --no-cache git yq
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - yq -i ".image.tag = \"$TAG\"" deploy/helm/isochrone-app/values-dev.yaml
+      - git config user.name "woodpecker-ci"
+      - git config user.email "ci@bot.local"
+      - git commit -am "deploy $TAG [skip ci]"
+      - git push https://$GITHUB_TOKEN@github.com/Yibbzz/Custom-Isochrone-Generator.git HEAD:development
