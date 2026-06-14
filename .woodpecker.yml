@@ -6,7 +6,7 @@ steps:
   - name: gitleaks
     image: ghcr.io/gitleaks/gitleaks:latest
     commands:
-      - gitleaks detect --source . --redact -v
+      - gitleaks detect --source . --redact -v --config .gitleaks.toml
 
   - name: build-and-push
     image: quay.io/buildah/stable
