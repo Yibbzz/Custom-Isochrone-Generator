@@ -1,7 +1,7 @@
 # Dev overrides:  helm upgrade --install isochrone-dev ./isochrone-app -f isochrone-app/values-dev.yaml
 
 image:
-  registry: k3d-k3d-registry.localhost:5000
+  registry: 192.168.0.202:5000
   repository: isochrone-app
   tag: development
 

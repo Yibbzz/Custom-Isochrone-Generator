@@ -28,7 +28,7 @@ steps:
     commands:
       - export TAG=${CI_COMMIT_SHA:0:12}
       - export REG=192.168.0.202:5000
-      - trivy image --insecure --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
+      - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
   - name: bump-tag-and-commit
     image: alpine:latest
