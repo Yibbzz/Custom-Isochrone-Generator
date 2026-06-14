@@ -49,5 +49,7 @@ steps:
       - yq -i ".image.tag = \"$TAG\"" deploy/helm/isochrone-app/values-dev.yaml
       - git config user.name "woodpecker-ci"
       - git config user.email "ci@bot.local"
+      - git config credential.helper store
+      - echo "https://Yibbzz:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
       - git commit -am "deploy $TAG [skip ci]"
-      - git push https://Yibbzz:${GITHUB_TOKEN}@github.com/Yibbzz/Custom-Isochrone-Generator.git HEAD:development
+      - git push origin HEAD:development
