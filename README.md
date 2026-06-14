@@ -91,4 +91,4 @@ This application utilizes the following software and technologies: Django (GeoDj
 
 This project uses data from [OpenStreetMap](https://www.openstreetmap.org/), which is made available under the [Open Database License (ODbL)](https://opendatacommons.org/licenses/odbl/1-0/).
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.test
