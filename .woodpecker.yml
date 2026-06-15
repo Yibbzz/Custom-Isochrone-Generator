@@ -38,18 +38,22 @@ steps:
     commands:
       - echo "token length=$(echo -n $GITHUB_TOKEN | wc -c)"
 
-  - name: bump-tag-and-commit
+  - name: bump-tag
     image: alpine:latest
-    environment:
-      GITHUB_TOKEN:
-        from_secret: github_token
     commands:
-      - apk add --no-cache git yq
+      - apk add --no-cache yq
       - export TAG=${CI_COMMIT_SHA:0:12}
       - yq -i ".image.tag = \"$TAG\"" deploy/helm/isochrone-app/values-dev.yaml
-      - git config user.name "woodpecker-ci"
-      - git config user.email "ci@bot.local"
-      - git config credential.helper store
-      - echo "https://Yibbzz:${GITHUB_TOKEN}@github.com" > ~/.git-credentials
-      - git commit -am "deploy $TAG [skip ci]"
-      - git push origin HEAD:development
+
+  - name: bump-tag-and-commit
+    image: appleboy/drone-git-push
+    settings:
+      remote: git@github.com:Yibbzz/Custom-Isochrone-Generator.git
+      branch: development
+      local_branch: development
+      author_name: woodpecker-ci
+      author_email: ci@bot.local
+      commit: true
+      commit_message: "deploy [skip ci]"
+      ssh_key:
+        from_secret: ssh_key
