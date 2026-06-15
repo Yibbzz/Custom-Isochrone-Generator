@@ -3,8 +3,7 @@
 image:
   registry: 192.168.0.202:5000
   repository: isochrone-app
-  tag: development
-
+  tag: 45986854f3e6
 django:
   djangoEnv: ""
   initPermissionsCommand: "chmod -R 777 /webapp/myapp/media/user_osm_files"
@@ -15,12 +14,10 @@ django:
     capabilities:
       add: ["NET_ADMIN", "NET_RAW"]
     readOnlyRootFilesystem: false
-
 ingress:
   host: custom-isochrones.local
   entrypoint: web
   tls: false
-
 # values-dev.yaml
 # values-dev.yaml — cloudflared block
 cloudflared:
@@ -31,13 +28,11 @@ cloudflared:
   credentialsFileName: credentials.json
   originCertSecret: ""
   ingress:
-    - { hostname: woodpecker-dev.geogsocfcform.top, service: "http://woodpecker-server.woodpecker.svc.cluster.local:80" }
-
+    - {hostname: woodpecker-dev.geogsocfcform.top, service: "http://woodpecker-server.woodpecker.svc.cluster.local:80"}
 metallb:
   enabled: false
-
 woodpecker:
   enabled: true
   host: https://woodpecker-dev.geogsocfcform.top
-  adminUser: Yibbzz            # your GitHub login (the repo owner) = the admin
+  adminUser: Yibbzz # your GitHub login (the repo owner) = the admin
   githubClient: Ov23liKOQhErV2AzW4PT
