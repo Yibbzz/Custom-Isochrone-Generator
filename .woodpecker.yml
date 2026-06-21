@@ -30,14 +30,6 @@ steps:
       - export REG=192.168.0.202:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
-  - name: debug-secret
-    image: alpine:latest
-    environment:
-      GITHUB_TOKEN:
-        from_secret: github_token
-    commands:
-      - echo "token length=$(echo -n $GITHUB_TOKEN | wc -c)"
-
   - name: update-gitops-tag
     image: alpine/git
     environment:
@@ -55,5 +47,5 @@ steps:
       - yq -i ".image.tag = \"$TAG\"" apps/isochrone/dev.yaml
       - git config user.email "woodpecker@ci"
       - git config user.name "Woodpecker CI"
-      - git commit -am "chore: deploy isochrone $TAG [skip ci]"
+      - "git commit -am 'chore: deploy isochrone $TAG [skip ci]'"
       - git push origin main
