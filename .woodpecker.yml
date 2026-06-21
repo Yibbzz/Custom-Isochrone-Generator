@@ -52,7 +52,7 @@ steps:
       - git clone git@github.com:Yibbzz/homelab-gitops.git /tmp/gitops
       - cd /tmp/gitops/homelab-gitops
       - apk add --no-cache yq
-      - yq -i ".image.tag = \"$TAG\"" apps/isochrone/values-dev.yaml
+      - yq -i ".image.tag = \"$TAG\"" apps/isochrone/dev.yaml
       - git config user.email "woodpecker@ci"
       - git config user.name "Woodpecker CI"
       - git commit -am "chore: deploy isochrone $TAG [skip ci]"
