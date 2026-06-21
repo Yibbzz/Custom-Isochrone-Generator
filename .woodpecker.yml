@@ -48,4 +48,4 @@ steps:
       - git config user.email "woodpecker@ci"
       - git config user.name "Woodpecker CI"
       - "git commit -am 'chore: deploy isochrone $TAG [skip ci]'"
-      - git push origin main 
+      - git push origin main
