@@ -38,22 +38,22 @@ steps:
     commands:
       - echo "token length=$(echo -n $GITHUB_TOKEN | wc -c)"
 
-  - name: bump-tag
-    image: alpine:latest
+  - name: update-gitops-tag
+    image: alpine/git
+    environment:
+      GITOPS_SSH_KEY:
+        from_secret: gitops_ssh_key
     commands:
-      - apk add --no-cache yq
       - export TAG=${CI_COMMIT_SHA:0:12}
-      - yq -i ".image.tag = \"$TAG\"" deploy/helm/isochrone-app/values-dev.yaml
-
-  - name: bump-tag-and-commit
-    image: appleboy/drone-git-push
-    settings:
-      remote: git@github.com:Yibbzz/Custom-Isochrone-Generator.git
-      branch: development
-      local_branch: development
-      author_name: woodpecker-ci
-      author_email: ci@bot.local
-      commit: true
-      commit_message: "deploy [skip ci]"
-      ssh_key:
-        from_secret: ssh_key
+      - mkdir -p ~/.ssh
+      - echo "$GITOPS_SSH_KEY" > ~/.ssh/id_ed25519
+      - chmod 600 ~/.ssh/id_ed25519
+      - ssh-keyscan github.com >> ~/.ssh/known_hosts
+      - git clone git@github.com:Yibbzz/homelab-gitops.git /tmp/gitops
+      - cd /tmp/gitops/homelab-gitops
+      - apk add --no-cache yq
+      - yq -i ".image.tag = \"$TAG\"" apps/isochrone/values-dev.yaml
+      - git config user.email "woodpecker@ci"
+      - git config user.name "Woodpecker CI"
+      - git commit -am "chore: deploy isochrone $TAG [skip ci]"
+      - git push origin main
