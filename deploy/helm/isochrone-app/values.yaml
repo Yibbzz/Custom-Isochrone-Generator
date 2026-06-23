@@ -1,0 +1,119 @@
+# =====================================================================
+# Common defaults. These lean toward PROD; override with -f values-dev.yaml
+# =====================================================================
+
+# Namespace for the application resources (django, celery, postgres, redis,
+# ingress, network policies, app PVCs). cloudflared/metallb use their own.
+namespace: default
+
+# Container image for django + celery (same image, different commands)
+image:
+  registry: k3d-k3d-registry.localhost:5000
+  repository: isochrone-app
+  tag: latest
+  pullPolicy: Always
+
+# Full image reference injected into django as the IMAGE env var (graphhopper)
+graphhopperImage: "k3d-k3d-registry.localhost:5000/graphhopper:latest"
+
+django:
+  replicas: 1
+  accessCode: "2283"
+  djangoEnv: "production"
+  initPermissionsCommand: "chmod -R 1000:1000 /webapp/myapp/media/user_osm_files"
+  podSecurityContext:
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: true
+
+celery:
+  workerReplicas: 1
+  beatReplicas: 1
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 1000
+    runAsGroup: 1000
+    fsGroup: 1000
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: ["ALL"]
+    readOnlyRootFilesystem: true
+
+postgres:
+  image: kartoza/postgis:17-3.5--v2024.12.17
+
+redis:
+  image: redis:alpine
+
+storage:
+  className: local-path-retain
+  postgresSize: 10Gi
+  efsClaimSize: 10Gi
+
+ingress:
+  enabled: true
+  className: traefik
+  host: custom-isochrones.co.uk
+  entrypoint: websecure          # "web" for plain http (dev)
+  tls: true
+  certResolver: le
+  redirectMiddleware: "default-redirect-to-https@kubernetescrd"
+
+cloudflared:
+  enabled: true
+  namespace: kube-system
+  image: cloudflare/cloudflared:latest
+  tunnelId: e6b3745d-4094-4923-8093-8f6c20d98536
+  credentialsSecret: cloudflared-credentials
+  credentialsFileName: tunnel.json
+  originCertSecret: cloudflared-origin-cert
+  ingress:
+    - { hostname: custom-isochrones.co.uk,     service: "http://django-service.default.svc.cluster.local:8000" }
+    - { hostname: www.custom-isochrones.co.uk, service: "http://django-service.default.svc.cluster.local:8000" }
+
+metallb:
+  enabled: true
+  namespace: metallb-system
+  addresses:
+    - 192.168.1.210-192.168.1.220
+
+networkPolicies:
+  enabled: true
+
+# Secrets the chart references. By default the chart does NOT create them
+# (you already manage postgres-secret / django-secret / cloudflared-* yourself,
+# e.g. via sealed-secrets). Flip create:true only if you want Helm to own the
+# postgres/django secrets from these values (keep real values OUT of git).
+secrets:
+  create: false
+  postgres:
+    user: ""
+    password: ""
+  django:
+    secretKey: ""
+
+woodpecker:
+  enabled: false
+  namespace: woodpecker
+  host: ""
+  adminUser: ""
+  githubClient: ""
+  existingSecret: woodpecker-secret
+  server:
+    image: woodpeckerci/woodpecker-server
+    tag: v3.6.0        # pin — check https://github.com/woodpecker-ci/woodpecker/releases for newer
+  agent:
+    image: woodpeckerci/woodpecker-agent
+    tag: v3.6.0
+  storage:
+    className: local-path-retain
+    size: 1Gi
+  backend:
+    namespace: woodpecker
+    storageClass: local-path
