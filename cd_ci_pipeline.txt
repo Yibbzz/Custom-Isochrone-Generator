@@ -19,5 +19,3 @@ Update GitOps Repo
 ArgoCD Syncs
     |
 Deploy to Production Namespace
-
-random change 5

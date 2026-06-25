@@ -30,6 +30,41 @@ steps:
       - export REG=192.168.0.202:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
+  - name: deploy-temp-namespace
+    image: alpine/helm:latest
+    environment:
+      KUBECONFIG_DATA:
+        from_secret: kubeconfig
+    commands:
+      - export TAG=${CI_COMMIT_SHA:0:12}
+      - export NS=isochrone-test-${CI_COMMIT_SHA:0:8}
+      - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
+      - kubectl create namespace $NS
+      - helm upgrade --install isochrone-test deploy/helm/isochrone-app
+          --namespace $NS
+          --values deploy/helm/isochrone-app/values.yaml
+          --set image.tag=$TAG
+          --set image.registry=192.168.0.202:5000
+          --wait --timeout 10m   # graphhopper needs time to ingest OSM data
+      - echo $NS > /tmp/namespace
+
+  - name: integration-tests
+    image: 192.168.0.202:5000/pytest-runner:latest  # build this once (see below)
+    commands:
+      - export NS=$(cat /woodpecker/namespace)
+      - export BASE_URL=http://isochrone-app-svc.$NS.svc.cluster.local
+      - cd tests && pytest -v --tb=short
+
+  - name: teardown-temp-namespace
+    image: bitnami/kubectl:latest
+    when:
+      - status: [ success, failure ]   # always clean up
+    environment:
+      KUBECONFIG_DATA:
+        from_secret: kubeconfig
+    commands:
+      - kubectl delete namespace $(cat /woodpecker/namespace) --ignore-not-found
+
   - name: update-gitops-tag
     image: alpine/git
     environment:
