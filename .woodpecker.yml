@@ -64,5 +64,5 @@ steps:
       - git config user.name "Woodpecker CI"
 
       - git add apps/isochrone/dev.yaml
-      - git commit -m "chore: deploy isochrone $TAG [skip ci]"
+      - 'git commit -m "chore: deploy isochrone $TAG [skip ci]"'
       - git push origin main
