@@ -99,6 +99,28 @@ def combine_custom_lines_with_osm_edges(custom: gpd.GeoDataFrame, edges_gdf: gpd
 
     return combined_gdf
 
+def validate_user_osm_intersection(lines_gdf: gpd.GeoDataFrame,
+                                   points_gdf: gpd.GeoDataFrame) -> None:
+    """
+    Ensures that user data actually intersects OSM network.
+    Raises an error if no valid intersections exist.
+    """
+
+    buffered = points_gdf.copy()
+    buffered["geometry"] = buffered.geometry.buffer(1e-5)
+
+    sjoin_result = gpd.sjoin(
+        lines_gdf,
+        buffered,
+        how="inner",
+        predicate="intersects"
+    )
+
+    if sjoin_result.empty:
+        raise ValueError(
+            "User data does not intersect with OSM network in the selected bounding box"
+        )
+
 #@log_time
 def create_points_from_gdf(lines_gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
     """
@@ -489,9 +511,9 @@ def write_osm_xml(combined_points_gdf: gpd.GeoDataFrame, split_lines_combined_gd
         ET.SubElement(way, "nd", ref=str(int(row.v)))
         
         for tag in standard_tags:
-            if getattr(row, tag, None) is not None:
-                ET.SubElement(way, "tag", k=tag, v=str(getattr(row, tag)))
-
+            value = getattr(row, tag, None)
+            if pd.notna(value):
+                ET.SubElement(way, "tag", k=tag, v=str(value))
 
     # Write everything to an XML file
     tree = ET.ElementTree(root)
@@ -516,6 +538,8 @@ def run_all(bbox_gdf: gpd.GeoDataFrame, custom_data_gdf: gpd.GeoDataFrame, osm_f
     nodes_gdf, edges_gdf = get_osm_data_from_bbox(bbox_gdf)
 
     combined_gdf = combine_custom_lines_with_osm_edges(custom_data_gdf, edges_gdf)
+
+    validate_user_osm_intersection(combined_gdf, custom_data_gdf)
 
     custom_points_gdf = create_points_from_gdf(combined_gdf)
 

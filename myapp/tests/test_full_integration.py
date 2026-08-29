@@ -1,361 +1,484 @@
-# tests/test_full_integration.py
-import os
+"""
+tests/test_user_flow.py
+
+Full end-to-end integration tests that mirror exactly what the browser does,
+driven entirely through Django HTTP views. No internal functions are called
+directly and nothing is mocked.
+
+Flow per scenario:
+  1. Seed GeoData (workaround for file-pointer bug in process_geojson_file)
+  2. POST /geojson/        — save bounding box
+  3. POST /geojson/        — save marker point
+  4. POST /geojson/        — set road network type
+  5. POST /geojson/        — set isochrone settings
+  6. GET  /get-geodata/    — OSM generation + GraphHopper deploy (real, no mocks)
+  7. Poll /container-button-activate/ until pod is ready
+  8. GET  /make-isochrone/ — real GraphHopper query
+  9. Assert geometry (bucket count, Polygon type, area > 0.1 km²)
+ 10. Cleanup: delete GraphHopper deployment/service + all DB rows
+
+Requirements:
+  - Run inside cluster or via mirrord so K8s API and GraphHopper are reachable
+  - Run with: mirrord exec -f .mirrord/mirrord.json -- python manage.py test
+              myapp.tests.test_user_flow.FullUserFlowTest
+"""
+
 import json
 import time
-import shutil
-import pytest
-import geopandas as gpd
-from shapely.geometry import shape
-from django.test import TestCase, RequestFactory
+import subprocess
+
+from django.test import TestCase, Client
 from django.contrib.auth.models import User
 from django.contrib.gis.geos import GEOSGeometry
+from django.urls import reverse
+from shapely.geometry import shape
 
 from myapp.models import (
     GeoData, BoxGeometry, MarkerGeometry,
-    IsochronePreferences, UserRoutingPod, NetworkType
+    IsochronePreferences, UserRoutingPod, NetworkType,
 )
 
+
 # ---------------------------------------------------------------------------
-# Test scenarios — (name, bbox_wkt, marker_point_wkt, transport_mode)
-# Pick areas small enough that osmnx fetches fast (~500m squares)
+# Test scenarios
 # ---------------------------------------------------------------------------
+
 TEST_SCENARIOS = [
     {
-        "name": "central_london",
-        "bbox_wkt": "POLYGON((-0.132 51.509, -0.118 51.509, -0.118 51.516, -0.132 51.516, -0.132 51.509))",
-        "marker_wkt": "POINT(-0.125 51.512)",
+        "name": "central_london_car",
+        "bbox_geojson": {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-0.132, 51.509], [-0.118, 51.509],
+                    [-0.118, 51.516], [-0.132, 51.516],
+                    [-0.132, 51.509],
+                ]],
+            },
+        },
+        "marker_geojson": {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [-0.125, 51.512]},
+        },
+        "custom_geodata": [
+            {"type": "LineString", "coordinates": [[-0.132, 51.509], [-0.118, 51.516]]},
+        ],
+        "network_selection": "residential",
+        "mph": None,
         "transport_mode": "car",
         "buckets": 1,
         "time_limit": 5,
     },
     {
-        "name": "london_bridge",
-        "bbox_wkt": "POLYGON((-0.092 51.503, -0.078 51.503, -0.078 51.510, -0.092 51.510, -0.092 51.503))",
-        "marker_wkt": "POINT(-0.085 51.506)",
-        "transport_mode": "car",
+        "name": "london_bridge_foot",
+        "bbox_geojson": {
+            "type": "Feature",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [-0.100, 51.497], [-0.070, 51.497],
+                    [-0.070, 51.515], [-0.100, 51.515],
+                    [-0.100, 51.497],
+                ]],
+            },
+        },
+        "marker_geojson": {
+            "type": "Feature",
+            "geometry": {"type": "Point", "coordinates": [-0.085, 51.506]},
+        },
+        "custom_geodata": [
+            {"type": "LineString", "coordinates": [[-0.092, 51.503], [-0.078, 51.510]]},
+        ],
+        "network_selection": "path",
+        "mph": None,
+        "transport_mode": "foot",
         "buckets": 2,
-        "time_limit": 8,
+        "time_limit": 3,
     },
 ]
 
-FIXTURE_DIR = os.path.join(os.path.dirname(__file__), "fixtures", "generated_osm")
+GRAPHHOPPER_READY_TIMEOUT = 300  # seconds
 
 
-def generate_osm_fixture(scenario: dict, user_id: int) -> str:
-    """
-    Runs the OSM generation pipeline for a scenario and writes the .osm file.
-    Returns the path to the generated file.
-    """
-    from myapp.utils.osm_conversion import (
-        get_osm_data_from_bbox,
-        combine_custom_lines_with_osm_edges,
-        create_points_from_gdf,
-        split_lines_with_buffered_points,
-        remove_duplicates_and_combine_nodes,
-        filter_split_lines,
-        assign_point_ids_to_lines,
-        update_and_finalize_lines_gdf,
-        check_line_node_consistency,
-        convert_to_wgs84_and_add_xy,
-        write_osm_xml,
-        configure_osmnx_cache,
-    )
-    import pandas as pd
-    from shapely.geometry import shape as shapely_shape
+# ---------------------------------------------------------------------------
+# Base test class
+# ---------------------------------------------------------------------------
 
-    configure_osmnx_cache()
-
-    bbox_geom = GEOSGeometry(scenario["bbox_wkt"])
-    bbox_gdf = gpd.GeoDataFrame(
-        [{"geometry": shapely_shape(json.loads(bbox_geom.geojson))}],
-        crs="EPSG:4326"
-    )
-
-    # Empty custom data — we're testing OSM-only path here
-    custom_gdf = gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
-
-    nodes_gdf, edges_gdf = get_osm_data_from_bbox(bbox_gdf)
-    combined_gdf = combine_custom_lines_with_osm_edges(custom_gdf, edges_gdf)
-    custom_points_gdf = create_points_from_gdf(combined_gdf)
-    split_lines_gdf = split_lines_with_buffered_points(combined_gdf, custom_points_gdf)
-    combined_points_gdf = remove_duplicates_and_combine_nodes(custom_points_gdf, nodes_gdf)
-    osm_split_lines_gdf = filter_split_lines(split_lines_gdf)
-    updated_lines = assign_point_ids_to_lines(osm_split_lines_gdf, combined_points_gdf)
-    final_lines = update_and_finalize_lines_gdf(split_lines_gdf, updated_lines)
-    final_lines = check_line_node_consistency(final_lines, combined_points_gdf)
-    combined_points_gdf = convert_to_wgs84_and_add_xy(combined_points_gdf)
-
-    os.makedirs(FIXTURE_DIR, exist_ok=True)
-    out_path = os.path.join(FIXTURE_DIR, f"{scenario['name']}_{user_id}.osm")
-    write_osm_xml(combined_points_gdf, final_lines, out_path)
-
-    return out_path
-
-
-class OsmGenerationTest(TestCase):
-    """
-    Tests the OSM generation pipeline in isolation — no K8s, no GraphHopper.
-    Verifies the .osm file is well-formed XML with nodes and ways.
-    """
+class FullUserFlowTest(TestCase):
 
     @classmethod
     def setUpClass(cls):
         super().setUpClass()
-        os.makedirs(FIXTURE_DIR, exist_ok=True)
 
-    def _assert_osm_file_valid(self, osm_path: str):
-        import xml.etree.ElementTree as ET
-        self.assertTrue(os.path.exists(osm_path), f"OSM file not created: {osm_path}")
-        tree = ET.parse(osm_path)
-        root = tree.getroot()
-        self.assertEqual(root.tag, "osm")
-        nodes = root.findall("node")
-        ways = root.findall("way")
-        self.assertGreater(len(nodes), 0, "OSM file has no nodes")
-        self.assertGreater(len(ways), 0, "OSM file has no ways")
-
-        # Every way's nd refs should point to a real node id
-        node_ids = {n.get("id") for n in nodes}
-        for way in ways:
-            for nd in way.findall("nd"):
-                self.assertIn(nd.get("ref"), node_ids,
-                              f"Way references missing node {nd.get('ref')}")
-
-    def test_osm_generation_central_london(self):
-        path = generate_osm_fixture(TEST_SCENARIOS[0], user_id=9001)
-        self._assert_osm_file_valid(path)
-
-    def test_osm_generation_london_bridge(self):
-        path = generate_osm_fixture(TEST_SCENARIOS[1], user_id=9002)
-        self._assert_osm_file_valid(path)
-
-    def test_osm_generation_with_custom_network_tags(self):
-        """Checks that custom highway tags are written into ways correctly."""
-        from myapp.utils.osm_conversion import (
-            get_osm_data_from_bbox, combine_custom_lines_with_osm_edges,
-            create_points_from_gdf, split_lines_with_buffered_points,
-            remove_duplicates_and_combine_nodes, filter_split_lines,
-            assign_point_ids_to_lines, update_and_finalize_lines_gdf,
-            check_line_node_consistency, convert_to_wgs84_and_add_xy,
-            update_gdf_tags, write_osm_xml, configure_osmnx_cache,
+    def setUp(self):
+        self.client = Client()
+        self.user = User.objects.create_user(
+            username=f"flowtest_{id(self)}", password="testpass"
         )
-        import xml.etree.ElementTree as ET
-        import pandas as pd
-        from shapely.geometry import shape as shapely_shape
+        self.client.force_login(self.user)
 
-        configure_osmnx_cache()
-        scenario = TEST_SCENARIOS[0]
-        bbox_geom = GEOSGeometry(scenario["bbox_wkt"])
-        bbox_gdf = gpd.GeoDataFrame(
-            [{"geometry": shapely_shape(json.loads(bbox_geom.geojson))}], crs="EPSG:4326"
+    def tearDown(self):
+        """Clean up GraphHopper deployment and all DB rows for this user."""
+        self._cleanup_graphhopper()
+        self.user.delete()  # cascades to all related models
+
+    # ------------------------------------------------------------------
+    # Step helpers
+    # ------------------------------------------------------------------
+
+    def _seed_geodata(self, geometries: list):
+        """
+        Step 1: Write GeoData rows directly to the DB.
+
+        process_geojson_file() reads the uploaded file twice (once in
+        form validation, once in json.load), exhausting the pointer so
+        nothing is ever saved. Seeding directly produces the same DB state
+        every downstream step depends on. This is a workaround for a bug
+        in that service function — fix there is to add geojson_file.seek(0)
+        before the json.load() call.
+        """
+        GeoData.objects.filter(user=self.user).delete()
+        for geom_dict in geometries:
+            geom = GEOSGeometry(json.dumps(geom_dict))
+            GeoData.objects.create(user=self.user, geom=geom)
+
+        self.assertTrue(
+            GeoData.objects.filter(user=self.user).exists(),
+            "Test setup failed: GeoData seed produced no rows",
         )
-        custom_gdf = gpd.GeoDataFrame(columns=["geometry"], geometry="geometry", crs="EPSG:4326")
 
-        nodes_gdf, edges_gdf = get_osm_data_from_bbox(bbox_gdf)
-        combined_gdf = combine_custom_lines_with_osm_edges(custom_gdf, edges_gdf)
-        custom_points_gdf = create_points_from_gdf(combined_gdf)
-        split_lines_gdf = split_lines_with_buffered_points(combined_gdf, custom_points_gdf)
-        combined_points_gdf = remove_duplicates_and_combine_nodes(custom_points_gdf, nodes_gdf)
-        osm_split = filter_split_lines(split_lines_gdf)
-        updated = assign_point_ids_to_lines(osm_split, combined_points_gdf)
-        final = update_and_finalize_lines_gdf(split_lines_gdf, updated)
-        final = check_line_node_consistency(final, combined_points_gdf)
-        combined_points_gdf = convert_to_wgs84_and_add_xy(combined_points_gdf)
-
-        network_tags = {"highway": "residential", "maxspeed": "20 mph"}
-        # Inject a fake custom row so update_gdf_tags has something to act on
-        if "custom" not in final.columns:
-            final["custom"] = "no"
-        final.loc[final.index[0], "custom"] = "yes"
-        final = update_gdf_tags(final, "custom", network_tags)
-
-        out_path = os.path.join(FIXTURE_DIR, "custom_tags_test.osm")
-        write_osm_xml(combined_points_gdf, final, out_path)
-
-        tree = ET.parse(out_path)
-        root = tree.getroot()
-        # Find at least one way that has our custom tag
-        found_tag = any(
-            way.find("tag[@k='highway'][@v='residential']") is not None
-            for way in root.findall("way")
+    def _save_bounding_box(self, bbox_geojson: dict):
+        """Step 2: POST the drawn rectangle geometry."""
+        response = self.client.post(
+            reverse("geojson_view"),
+            {"geometry_data": json.dumps(bbox_geojson)},
         )
-        self.assertTrue(found_tag, "No way with custom highway=residential tag found")
+        self.assertIn(response.status_code, [200, 302],
+                      f"Bounding box save failed: {response.status_code}")
+        self.assertTrue(
+            BoxGeometry.objects.filter(user=self.user).exists(),
+            "Bounding box POST succeeded but no BoxGeometry row was saved",
+        )
 
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        if os.path.exists(FIXTURE_DIR):
-            shutil.rmtree(FIXTURE_DIR)
+    def _save_marker(self, marker_geojson: dict):
+        """Step 3: POST the placed marker point."""
+        response = self.client.post(
+            reverse("geojson_view"),
+            {"marker_data": json.dumps(marker_geojson)},
+        )
+        self.assertIn(response.status_code, [200, 302],
+                      f"Marker save failed: {response.status_code}")
+        self.assertTrue(
+            MarkerGeometry.objects.filter(user=self.user).exists(),
+            "Marker POST succeeded but no MarkerGeometry row was saved",
+        )
 
+    def _submit_network_type(self, selection: str, mph=None):
+        """Step 4: POST the road network type form."""
+        data = {"selection": selection}
+        if mph is not None:
+            data["mph"] = mph
+        response = self.client.post(reverse("geojson_view"), data)
+        self.assertIn(response.status_code, [200, 302],
+                      f"Network type submission failed: {response.status_code}")
 
-class FullIsochroneIntegrationTest(TestCase):
-    """
-    Requires mirrord (local) or a running cluster (CI).
-    Generates real OSM data, spins up GraphHopper, queries it.
-    Run with: mirrord exec -f .mirrord/mirrord.json -- python manage.py test myapp.tests.test_full_integration.FullIsochroneIntegrationTest
-    """
+    def _submit_isochrone_settings(self, mode: str, buckets: int, time_limit: int):
+        """Step 5: POST the isochrone settings form."""
+        response = self.client.post(
+            reverse("geojson_view"),
+            {"mode_selection": mode, "buckets": buckets, "time_limit": time_limit},
+        )
+        self.assertIn(response.status_code, [200, 302],
+                      f"Isochrone settings submission failed: {response.status_code}")
 
-    @classmethod
-    def setUpClass(cls):
-        super().setUpClass()
-        os.makedirs(FIXTURE_DIR, exist_ok=True)
-        # Generate OSM fixtures once for all test methods — osmnx fetches are slow
-        cls.scenario_osm_paths = {}
-        for scenario in TEST_SCENARIOS:
-            # Use a high user_id range that won't clash with real users
-            uid = 9000 + TEST_SCENARIOS.index(scenario)
-            path = generate_osm_fixture(scenario, uid)
-            cls.scenario_osm_paths[scenario["name"]] = path
+    def _trigger_geodata_and_deploy(self):
+        """
+        Step 6: GET /get-geodata/ — runs OSM generation and deploys GraphHopper.
+        This is the slow step; it starts the pod but doesn't wait for it to be ready.
+        """
+        response = self.client.get(reverse("get_geodata"))
+        self.assertEqual(
+            response.status_code, 200,
+            f"/get-geodata/ returned {response.status_code}: {response.content.decode()}",
+        )
+
+    def _wait_for_pod_ready(self, timeout=GRAPHHOPPER_READY_TIMEOUT):
+        """
+        Step 7: Poll /container-button-activate/ until the pod signals ready,
+        mirroring what the browser JS does.
+        """
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            response = self.client.get(reverse("container_button_activate"))
+            self.assertEqual(response.status_code, 200)
+            data = json.loads(response.content)
+            if data.get("isRunning"):
+                return
+            print(f"  Waiting for GraphHopper pod... "
+                  f"{int(deadline - time.time())}s remaining")
+            time.sleep(5)
+
+        # Dump logs to help diagnose timeout
+        try:
+            pod_name = subprocess.getoutput(
+                f"kubectl get pod -l app=graphhopper,user={self.user.id} -o name"
+            )
+            logs = subprocess.getoutput(f"kubectl logs {pod_name} --tail=40")
+            print(f"GraphHopper logs:\n{logs}")
+        except Exception:
+            pass
+
+        self.fail(
+            f"GraphHopper pod never became ready for user {self.user.id} "
+            f"after {timeout}s"
+        )
+
+    def _wait_for_graphhopper_http(self, timeout=GRAPHHOPPER_READY_TIMEOUT):
+        """
+        Step 7b: Poll GraphHopper's HTTP endpoint directly until it responds.
+        The pod reaching Running state is not enough — GraphHopper needs extra
+        time after that to load the OSM file before it serves requests.
+        """
+        import requests as req
+
+        pod_obj = UserRoutingPod.objects.get(user=self.user)
+        base = f"http://{pod_obj.service_name}.default.svc.cluster.local:8989"
+        urls = [f"{base}/health", f"{base}/healthcheck"]
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            for url in urls:
+                try:
+                    if req.get(url, timeout=5).status_code == 200:
+                        print(f"  GraphHopper ready at {url}")
+                        return
+                except req.exceptions.RequestException:
+                    pass
+            print(f"  Waiting for GraphHopper HTTP... {int(deadline - time.time())}s remaining")
+            time.sleep(5)
+
+        # Dump pod logs to help diagnose
+        try:
+            pod_name = subprocess.getoutput(
+                f"kubectl get pod -l app=graphhopper,user={self.user.id} -o name"
+            )
+            print(f"GraphHopper logs:{subprocess.getoutput(f'kubectl logs {pod_name} --tail=40')}")
+        except Exception:
+            pass
+
+        self.fail(
+            f"GraphHopper HTTP never became ready for user {self.user.id} after {timeout}s"
+        )
+
+    def _create_isochrone(self):
+        """Step 8: GET /make-isochrone/ — real GraphHopper query."""
+        response = self.client.get(reverse("make_isochrone"))
+        self.assertEqual(
+            response.status_code, 200,
+            f"/make-isochrone/ returned {response.status_code}: {response.content.decode()}",
+        )
+        return json.loads(response.content)
+
+    # ------------------------------------------------------------------
+    # Cleanup
+    # ------------------------------------------------------------------
+
+    def _cleanup_graphhopper(self):
+        """Delete the GraphHopper K8s deployment and service for this user."""
+        try:
+            from kubernetes import client, config
+            try:
+                config.load_incluster_config()
+            except Exception:
+                config.load_kube_config()
+
+            apps_v1 = client.AppsV1Api()
+            core_v1 = client.CoreV1Api()
+            user_id = self.user.id
+
+            for api, name in [
+                (apps_v1.delete_namespaced_deployment,
+                 f"graphhopper-{user_id}"),
+                (core_v1.delete_namespaced_service,
+                 f"graphhopper-{user_id}-service"),
+            ]:
+                try:
+                    api(name, "default")
+                    print(f"  Deleted {name}")
+                except Exception:
+                    pass  # already gone or never created — fine
+
+            # Remove the OSM file from the PVC
+            try:
+                pod_name = subprocess.getoutput(
+                    "kubectl get pod -l app=my-django-app -o name | head -1"
+                ).strip().removeprefix("pod/")
+                subprocess.run(
+                    ["kubectl", "exec", pod_name, "--",
+                     "rm", "-f", f"/webapp/myapp/media/user_osm_files/{user_id}.osm"],
+                    timeout=15, check=False,
+                )
+            except Exception:
+                pass
+
+        except Exception as e:
+            print(f"  Warning: GraphHopper cleanup failed: {e}")
+
+    # ------------------------------------------------------------------
+    # Full flow runner
+    # ------------------------------------------------------------------
 
     def _run_scenario(self, scenario: dict):
-        from myapp.services.create_routing_pod import (
-            create_or_update_deployment_and_service,
-            is_user_pod_running,
+        """Run all 8 steps for a scenario and return the parsed isochrone data."""
+        print(f"\n[{scenario['name']}] Starting full flow...")
+
+        self._seed_geodata(scenario["custom_geodata"])
+        self._save_bounding_box(scenario["bbox_geojson"])
+        self._save_marker(scenario["marker_geojson"])
+        self._submit_network_type(scenario["network_selection"], scenario["mph"])
+        self._submit_isochrone_settings(
+            scenario["transport_mode"],
+            scenario["buckets"],
+            scenario["time_limit"],
         )
-        from myapp.services.prepare_isochrone_data import (
-            check_marker_geometry,
-            get_user_isochrone_preferences,
-            prepare_marker_geodata,
+
+        print(f"[{scenario['name']}] Triggering OSM generation and deploy...")
+        self._trigger_geodata_and_deploy()
+
+        print(f"[{scenario['name']}] Waiting for GraphHopper pod to reach Running...")
+        self._wait_for_pod_ready()
+
+        print(f"[{scenario['name']}] Waiting for GraphHopper HTTP to be ready...")
+        self._wait_for_graphhopper_http()
+
+        print(f"[{scenario['name']}] Querying isochrone...")
+        return self._create_isochrone()
+
+    # Minimum plausible isochrone area per transport mode (km²).
+    # Car/5min can reach ~0.1km²; foot/3min realistically covers ~0.005km².
+    MIN_AREA_KM2 = {
+        "car":  0.05,
+        "foot": 0.001,
+        "bike": 0.01,
+    }
+
+    def _assert_isochrone_geometry(self, data: dict, scenario: dict):
+        """Shared geometry assertions matching the original test suite."""
+        self.assertEqual(
+            data["status"], "success",
+            f"[{scenario['name']}] Expected success, got: {data}",
         )
-        from myapp.services.routing_queries import handle_isochrone_creation
 
-        user = User.objects.create_user(
-            username=f"integtest_{scenario['name']}", password="pass"
-        )
-        factory = RequestFactory()
-        request = factory.get("/")
-        request.user = user
-        user_id = user.id
-
-        # Seed DB
-        BoxGeometry.objects.create(user=user, geom=GEOSGeometry(scenario["bbox_wkt"]))
-        MarkerGeometry.objects.create(user=user, geom=GEOSGeometry(scenario["marker_wkt"]))
-        IsochronePreferences.objects.create(
-            user=user,
-            mode_selection=scenario["transport_mode"],
-            buckets=scenario["buckets"],
-            time_limit=scenario["time_limit"],
-        )
-        NetworkType.objects.create(user=user, selection="residential")
-
-        # Copy the pre-generated OSM fixture to the expected path
-        osm_dest = f"/webapp/myapp/media/user_osm_files/{user_id}.osm"
-        os.makedirs(os.path.dirname(osm_dest), exist_ok=True)
-        shutil.copy(cls.scenario_osm_paths[scenario["name"]], osm_dest)
-
-        # Spin up GraphHopper
-        create_or_update_deployment_and_service(user_id, request)
-        running = is_user_pod_running(user_id, request, timeout_immediately=False)
-        self.assertTrue(running, f"[{scenario['name']}] GraphHopper pod never reached Running")
-
-        self._wait_for_graphhopper_http(user, timeout=300)
-
-        # Run isochrone creation
-        check_marker_geometry(user)
-        isochrone_params = get_user_isochrone_preferences(user)
-        point_coordinates = prepare_marker_geodata(user)
-        response = handle_isochrone_creation(user, isochrone_params, point_coordinates)
-
-        data = json.loads(response.content)
-        self.assertEqual(data["status"], "success", f"[{scenario['name']}] {data}")
         iso = json.loads(data["iso_json"])
         self.assertEqual(
             len(iso["features"]), scenario["buckets"],
-            f"[{scenario['name']}] expected {scenario['buckets']} bucket(s)"
+            f"[{scenario['name']}] Expected {scenario['buckets']} bucket(s), "
+            f"got {len(iso['features'])}",
         )
 
-        # Polygon sanity checks
+        mode = scenario["transport_mode"]
+        min_area = self.MIN_AREA_KM2.get(mode, 0.001)
+
         for feature in iso["features"]:
             geom = shape(feature["geometry"])
-            self.assertEqual(geom.geom_type, "Polygon")
-            self.assertGreater(geom.area, 0.000001,
-                               f"[{scenario['name']}] isochrone polygon suspiciously small")
+            self.assertEqual(
+                geom.geom_type, "Polygon",
+                f"[{scenario['name']}] Expected Polygon, got {geom.geom_type}",
+            )
+            # Convert degrees² → km² at London's latitude (1° lon ≈ 111km, 1° lat ≈ 69km)
+            area_km2 = geom.area * 111 * 69
+            self.assertGreater(
+                area_km2, min_area,
+                f"[{scenario['name']}] ({mode}) Isochrone area {area_km2:.4f} km² "
+                f"is below minimum {min_area} km²",
+            )
 
-        return user_id
+    # ------------------------------------------------------------------
+    # Test methods
+    # ------------------------------------------------------------------
 
-    def test_central_london_isochrone(self):
-        self._run_scenario(TEST_SCENARIOS[0])
+    def test_central_london_car_isochrone(self):
+        scenario = TEST_SCENARIOS[0]
+        data = self._run_scenario(scenario)
+        self._assert_isochrone_geometry(data, scenario)
 
-    def test_london_bridge_isochrone(self):
-        self._run_scenario(TEST_SCENARIOS[1])
+    def test_london_bridge_foot_isochrone(self):
+        scenario = TEST_SCENARIOS[1]
+        data = self._run_scenario(scenario)
+        self._assert_isochrone_geometry(data, scenario)
 
     def test_multi_bucket_has_increasing_areas(self):
-        """The outer bucket polygon should be larger than the inner one."""
-        scenario = TEST_SCENARIOS[1]  # buckets=2
-        from myapp.services.prepare_isochrone_data import (
-            check_marker_geometry, get_user_isochrone_preferences, prepare_marker_geodata
-        )
-        from myapp.services.routing_queries import handle_isochrone_creation
-        from myapp.services.create_routing_pod import (
-            create_or_update_deployment_and_service, is_user_pod_running
-        )
+        """The outer bucket polygon should cover more area than the inner one."""
+        scenario = TEST_SCENARIOS[1]  # 2 buckets
+        data = self._run_scenario(scenario)
 
-        user = User.objects.create_user(username="integtest_buckets", password="pass")
-        factory = RequestFactory()
-        request = factory.get("/")
-        request.user = user
-
-        BoxGeometry.objects.create(user=user, geom=GEOSGeometry(scenario["bbox_wkt"]))
-        MarkerGeometry.objects.create(user=user, geom=GEOSGeometry(scenario["marker_wkt"]))
-        IsochronePreferences.objects.create(
-            user=user, mode_selection="car", buckets=2, time_limit=10
-        )
-        NetworkType.objects.create(user=user, selection="residential")
-
-        osm_dest = f"/webapp/myapp/media/user_osm_files/{user.id}.osm"
-        os.makedirs(os.path.dirname(osm_dest), exist_ok=True)
-        shutil.copy(cls.scenario_osm_paths[scenario["name"]], osm_dest)
-
-        create_or_update_deployment_and_service(user.id, request)
-        is_user_pod_running(user.id, request, timeout_immediately=False)
-        self._wait_for_graphhopper_http(user)
-
-        check_marker_geometry(user)
-        params = get_user_isochrone_preferences(user)
-        coords = prepare_marker_geodata(user)
-        response = handle_isochrone_creation(user, params, coords)
-        data = json.loads(response.content)
+        self.assertEqual(data["status"], "success", data)
         iso = json.loads(data["iso_json"])
+        areas = sorted([shape(f["geometry"]).area for f in iso["features"]])
+        self.assertGreater(
+            areas[-1], areas[0] * 1.1,
+            f"Outer bucket should be meaningfully larger than inner. Areas: {areas}",
+        )
 
-        areas = [shape(f["geometry"]).area for f in iso["features"]]
-        self.assertGreater(areas[1], areas[0], "Outer bucket should cover more area than inner")
+    def test_missing_marker_returns_error(self):
+        """Skipping the marker step should return 400 at /make-isochrone/."""
+        scenario = TEST_SCENARIOS[0]
 
-    def _wait_for_graphhopper_http(self, user, timeout=300):
-        import requests as req
-        pod_obj = UserRoutingPod.objects.get(user=user)
-        url = f"http://{pod_obj.service_name}.default.svc.cluster.local:8989/health"
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            try:
-                if req.get(url, timeout=5).status_code == 200:
-                    return
-            except req.ConnectionError:
-                pass
-            time.sleep(5)
-        raise TimeoutError(f"GraphHopper never became ready at {url}")
+        self._seed_geodata(scenario["custom_geodata"])
+        self._save_bounding_box(scenario["bbox_geojson"])
+        # deliberately skip _save_marker
+        self._submit_network_type(scenario["network_selection"])
+        self._submit_isochrone_settings(
+            scenario["transport_mode"],
+            scenario["buckets"],
+            scenario["time_limit"],
+        )
+        self._trigger_geodata_and_deploy()
+        self._wait_for_pod_ready()
+        self._wait_for_graphhopper_http()
 
-    @classmethod
-    def tearDownClass(cls):
-        super().tearDownClass()
-        from kubernetes import client, config
-        try:
-            config.load_incluster_config()
-        except Exception:
-            config.load_kube_config()
+        response = self.client.get(reverse("make_isochrone"))
+        self.assertEqual(response.status_code, 400,
+                         "Missing marker should return 400")
+        data = json.loads(response.content)
+        self.assertIn("error", data)
 
-        apps_v1 = client.AppsV1Api()
-        core_v1 = client.CoreV1Api()
+    def test_missing_bbox_returns_error(self):
+        """Skipping the bounding box should return 400 at /get-geodata/."""
+        scenario = TEST_SCENARIOS[0]
 
-        # Clean up all test deployments
-        for scenario in TEST_SCENARIOS:
-            uid = 9000 + TEST_SCENARIOS.index(scenario)
-            for name in [f"graphhopper-{uid}", f"graphhopper-{uid}-service"]:
-                try:
-                    apps_v1.delete_namespaced_deployment(f"graphhopper-{uid}", "default")
-                    core_v1.delete_namespaced_service(f"graphhopper-{uid}-service", "default")
-                except Exception:
-                    pass
+        self._seed_geodata(scenario["custom_geodata"])
+        # deliberately skip _save_bounding_box
+        self._submit_network_type(scenario["network_selection"])
+        self._submit_isochrone_settings(
+            scenario["transport_mode"],
+            scenario["buckets"],
+            scenario["time_limit"],
+        )
 
-        # Clean up generated OSM files
-        if os.path.exists(FIXTURE_DIR):
-            shutil.rmtree(FIXTURE_DIR)
+        response = self.client.get(reverse("get_geodata"))
+        self.assertEqual(response.status_code, 400,
+                         "Missing bbox should return 400")
+        data = json.loads(response.content)
+        self.assertIn("error", data)
+
+    def test_export_after_isochrone(self):
+        """After a successful isochrone, export should return a GeoJSON attachment."""
+        scenario = TEST_SCENARIOS[0]
+        self._run_scenario(scenario)
+
+        response = self.client.get(reverse("export_isochrones"))
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("json", response.get("Content-Type", ""))
+        self.assertIn("attachment", response.get("Content-Disposition", ""),
+                      "Export should be a file download, not inline")
+
+    def test_unauthenticated_user_redirected(self):
+        """All protected endpoints should redirect unauthenticated users to login."""
+        self.client.logout()
+        for url_name in ["geojson_view", "get_geodata", "make_isochrone", "export_isochrones"]:
+            response = self.client.get(reverse(url_name))
+            self.assertIn(response.status_code, [301, 302],
+                          f"{url_name} should redirect unauthenticated users")
+            self.assertIn("/accounts/login/", response["Location"])

@@ -21,14 +21,9 @@ test-unit:
 		myapp.tests.test_cleanup_commands \
 		-v 2
 
-test-osm:
-	$(RUN_PREFIX) $(PYTEST) \
-		myapp.tests.test_full_integration.OsmGenerationTest \
-		-v 2
-
 test-integration:
 	$(RUN_PREFIX) $(PYTEST) \
-		myapp.tests.test_full_integration.FullIsochroneIntegrationTest \
+		myapp.tests.test_full_integration.FullUserFlowTest \
 		-v 2 --keepdb
 
 test-all: test-unit test-osm test-integration

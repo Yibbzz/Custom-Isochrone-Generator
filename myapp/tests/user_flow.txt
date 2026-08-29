@@ -1,0 +1,33 @@
+This is to first provide the input data, and then call all of the functions at the highest level for testing the output against expected.
+
+
+test cases will be only walking as cycling and driving would require a larger extent:
+
+control test - no user data, same marker and bounding box and travel type and time settings
+
+linestring positive - check isochrone polygon is larger than the control
+multilinestring positive - check isochrone polygon is larger than the control
+
+no user data negative
+linestring fully outside bbox negative 
+multilinestring fully outside bbox negative
+linestring partially outside bbox negative
+multilinestring partially outside bbox negative
+isochrone generated is too large for bbox
+multilinestring and linestring not intersecting with existing data negative
+
+they will all use these params
+"network_selection": "path",
+"mph": None,
+"transport_mode": "foot",
+"buckets": 2,
+"time_limit": 10,
+
+---
+
+for the first test the sample data and test will be simple so i can create a framework and add more tests easily
+
+- linestring positive - check isochrone polygon is larger than the control
+
+now figure out user flow.
+

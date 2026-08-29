@@ -79,3 +79,5 @@ __pycache__/
 myapp/media/
 myapp/temp/
 woodpecker_deploy_key
+
+user_osm_files/

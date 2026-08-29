@@ -30,6 +30,21 @@ steps:
       - export REG=192.168.0.202:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
+  - name: test-unit
+    image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
+    commands:
+      - python manage.py test
+          myapp.tests.test_db_logic
+          myapp.tests.test_cleanup_commands
+          -v 2
+
+  - name: test-osm
+    image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
+    commands:
+      - python manage.py test
+          myapp.tests.test_full_integration.OsmGenerationTest
+          -v 2
+
   - name: deploy-temp-namespace
     image: alpine/helm:latest
     environment:
@@ -39,31 +54,37 @@ steps:
       - export TAG=${CI_COMMIT_SHA:0:12}
       - export NS=isochrone-test-${CI_COMMIT_SHA:0:8}
       - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
+      - apk add --no-cache kubectl
       - kubectl create namespace $NS
       - helm upgrade --install isochrone-test deploy/helm/isochrone-app
           --namespace $NS
           --values deploy/helm/isochrone-app/values.yaml
           --set image.tag=$TAG
           --set image.registry=192.168.0.202:5000
-          --wait --timeout 10m   # graphhopper needs time to ingest OSM data
-      - echo $NS > /tmp/namespace
+          --wait --timeout 10m
+      - echo $NS > /tmp/ns
 
-  - name: integration-tests
-    image: 192.168.0.202:5000/pytest-runner:latest  # build this once (see below)
-    commands:
-      - export NS=$(cat /woodpecker/namespace)
-      - export BASE_URL=http://isochrone-app-svc.$NS.svc.cluster.local
-      - cd tests && pytest -v --tb=short
-
-  - name: teardown-temp-namespace
-    image: bitnami/kubectl:latest
-    when:
-      - status: [ success, failure ]   # always clean up
+  - name: test-integration
+    image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
     environment:
       KUBECONFIG_DATA:
         from_secret: kubeconfig
     commands:
-      - kubectl delete namespace $(cat /woodpecker/namespace) --ignore-not-found
+      - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
+      - python manage.py test
+          myapp.tests.test_full_integration.FullIsochroneIntegrationTest
+          -v 2
+
+  - name: teardown-temp-namespace
+    image: bitnami/kubectl:latest
+    when:
+      - status: [ success, failure ]
+    environment:
+      KUBECONFIG_DATA:
+        from_secret: kubeconfig
+    commands:
+      - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
+      - kubectl delete namespace $(cat /tmp/ns) --ignore-not-found
 
   - name: update-gitops-tag
     image: alpine/git
