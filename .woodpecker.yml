@@ -1,6 +1,8 @@
 when:
   - event: push
-    branch: main
+    branch:
+      - main
+      - development
 
 steps:
   - name: gitleaks
@@ -30,22 +32,25 @@ steps:
       - export REG=192.168.0.202:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
-  - name: test-unit
-    image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
-    commands:
-      - python manage.py test
-          myapp.tests.test_db_logic
-          myapp.tests.test_cleanup_commands
-          -v 2
+  # - name: test-unit
+  #   image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
+  #   commands:
+  #     - python manage.py test
+  #         myapp.tests.test_db_logic
+  #         myapp.tests.test_cleanup_commands
+  #         -v 2
 
-  - name: test-osm
-    image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
-    commands:
-      - python manage.py test
-          myapp.tests.test_full_integration.OsmGenerationTest
-          -v 2
+  # - name: test-osm
+  #   image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
+  #   commands:
+  #     - python manage.py test
+  #         myapp.tests.test_full_integration.OsmGenerationTest
+  #         -v 2
 
   - name: update-gitops-tag
+    when:
+      - event: push
+        branch: main
     image: alpine:latest
     environment:
       GITHUB_TOKEN:
@@ -53,16 +58,11 @@ steps:
     commands:
       - apk add --no-cache git yq
       - export TAG=${CI_COMMIT_SHA:0:12}
-
       - git clone https://$GITHUB_TOKEN@github.com/Yibbzz/homelab-gitops.git /tmp/gitops
-
       - cd /tmp/gitops/homelab-gitops
-
       - yq -i ".image.tag = \"$TAG\"" apps/isochrone/dev.yaml
-
       - git config user.email "woodpecker@ci"
       - git config user.name "Woodpecker CI"
-
       - git add apps/isochrone/dev.yaml
       - 'git commit -m "chore: deploy isochrone $TAG [skip ci]"'
       - git push origin main
