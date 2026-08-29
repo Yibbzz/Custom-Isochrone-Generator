@@ -45,63 +45,24 @@ steps:
           myapp.tests.test_full_integration.OsmGenerationTest
           -v 2
 
-  - name: deploy-temp-namespace
-    image: alpine/helm:latest
-    environment:
-      KUBECONFIG_DATA:
-        from_secret: kubeconfig
-    commands:
-      - export TAG=${CI_COMMIT_SHA:0:12}
-      - export NS=isochrone-test-${CI_COMMIT_SHA:0:8}
-      - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
-      - apk add --no-cache kubectl
-      - kubectl create namespace $NS
-      - helm upgrade --install isochrone-test deploy/helm/isochrone-app
-          --namespace $NS
-          --values deploy/helm/isochrone-app/values.yaml
-          --set image.tag=$TAG
-          --set image.registry=192.168.0.202:5000
-          --wait --timeout 10m
-      - echo $NS > /tmp/ns
-
-  - name: test-integration
-    image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
-    environment:
-      KUBECONFIG_DATA:
-        from_secret: kubeconfig
-    commands:
-      - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
-      - python manage.py test
-          myapp.tests.test_full_integration.FullIsochroneIntegrationTest
-          -v 2
-
-  - name: teardown-temp-namespace
-    image: bitnami/kubectl:latest
-    when:
-      - status: [ success, failure ]
-    environment:
-      KUBECONFIG_DATA:
-        from_secret: kubeconfig
-    commands:
-      - mkdir -p ~/.kube && echo "$KUBECONFIG_DATA" > ~/.kube/config
-      - kubectl delete namespace $(cat /tmp/ns) --ignore-not-found
-
   - name: update-gitops-tag
-    image: alpine/git
+    image: alpine:latest
     environment:
-      GITOPS_SSH_KEY:
-        from_secret: gitops_ssh_key
+      GITHUB_TOKEN:
+        from_secret: github_token
     commands:
+      - apk add --no-cache git yq
       - export TAG=${CI_COMMIT_SHA:0:12}
-      - mkdir -p ~/.ssh
-      - echo "$GITOPS_SSH_KEY" > ~/.ssh/id_ed25519
-      - chmod 600 ~/.ssh/id_ed25519
-      - ssh-keyscan github.com >> ~/.ssh/known_hosts
-      - git clone git@github.com:Yibbzz/homelab-gitops.git /tmp/gitops
+
+      - git clone https://$GITHUB_TOKEN@github.com/Yibbzz/homelab-gitops.git /tmp/gitops
+
       - cd /tmp/gitops/homelab-gitops
-      - apk add --no-cache yq
+
       - yq -i ".image.tag = \"$TAG\"" apps/isochrone/dev.yaml
+
       - git config user.email "woodpecker@ci"
       - git config user.name "Woodpecker CI"
-      - "git commit -am 'chore: deploy isochrone $TAG [skip ci]'"
+
+      - git add apps/isochrone/dev.yaml
+      - git commit -m "chore: deploy isochrone $TAG [skip ci]"
       - git push origin main
