@@ -21,7 +21,7 @@ steps:
       STORAGE_DRIVER: vfs
     commands:
       - export TAG=${CI_COMMIT_SHA:0:12}
-      - export REG=192.168.0.202:5000
+      - export REG=k3d-k3d-registry.localhost:5000
       - buildah bud -f docker/Dockerfile.dev -t $REG/isochrone-app:$TAG .
       - buildah push --tls-verify=false $REG/isochrone-app:$TAG
 
@@ -29,52 +29,63 @@ steps:
     image: aquasec/trivy:latest
     commands:
       - export TAG=${CI_COMMIT_SHA:0:12}
-      - export REG=192.168.0.202:5000
+      - export REG=k3d-k3d-registry.localhost:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
   - name: cleanup-old-images
     image: alpine:latest
     commands:
       - apk add --no-cache curl jq
-      - export REG=192.168.0.202:5000
+      - export REG=k3d-k3d-registry.localhost:5000
       - export REPO=isochrone-app
       - export KEEP=2
-      # Fetch all tags
-      - TAGS=$(curl -sk https://$REG/v2/$REPO/tags/list | jq -r '.tags[]')
-      # For each tag, get its creation date from the manifest and sort
       - |
+        TAGS=$(curl -sk http://$REG/v2/$REPO/tags/list | jq -r '.tags[]')
         TAG_DATES=""
         for TAG in $TAGS; do
-          DIGEST=$(curl -sk -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-            https://$REG/v2/$REPO/manifests/$TAG \
+          # Only process 12-char hex SHA tags, skip 'development' etc
+          if ! echo "$TAG" | grep -qE '^[0-9a-f]{12}$'; then
+            echo "Skipping $TAG"
+            continue
+          fi
+
+          DIGEST=$(curl -sk \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+            http://$REG/v2/$REPO/manifests/$TAG \
             | jq -r '.config.digest // empty')
-          if [ -z "$DIGEST" ]; then continue; fi
-          CREATED=$(curl -sk https://$REG/v2/$REPO/blobs/$DIGEST \
+          if [ -z "$DIGEST" ]; then echo "$TAG -> no digest, skipping"; continue; fi
+
+          CREATED=$(curl -sk http://$REG/v2/$REPO/blobs/$DIGEST \
             | jq -r '.created // empty')
-          if [ -z "$CREATED" ]; then continue; fi
-          TAG_DATES="$TAG_DATES $CREATED $TAG"
+          if [ -z "$CREATED" ]; then echo "$TAG -> no date, skipping"; continue; fi
+
+          echo "$CREATED $TAG"
+          TAG_DATES="$TAG_DATES\n$CREATED $TAG"
         done
-      # Sort by date, drop the newest $KEEP, delete the rest
-      - |
-        SORTED=$(echo $TAG_DATES | xargs -n2 | sort -r | awk '{print $2}')
+
+        SORTED=$(printf "$TAG_DATES" | grep -v '^$' | sort -r | awk '{print $2}')
         TO_DELETE=$(echo "$SORTED" | tail -n +$(($KEEP + 1)))
+
         if [ -z "$TO_DELETE" ]; then
           echo "Nothing to delete."
           exit 0
         fi
+
         for TAG in $TO_DELETE; do
-          echo "Deleting tag: $TAG"
-          DIGEST=$(curl -sk -I \
-            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
-            https://$REG/v2/$REPO/manifests/$TAG \
+          echo "Deleting $TAG..."
+          MANIFEST_DIGEST=$(curl -sk -I \
+            -H "Accept: application/vnd.oci.image.manifest.v1+json" \
+            http://$REG/v2/$REPO/manifests/$TAG \
             | grep -i docker-content-digest | awk '{print $2}' | tr -d '\r')
-          if [ -z "$DIGEST" ]; then
-            echo "Could not get digest for $TAG, skipping."
+
+          if [ -z "$MANIFEST_DIGEST" ]; then
+            echo "Could not get manifest digest for $TAG, skipping."
             continue
           fi
+
           STATUS=$(curl -sk -o /dev/null -w "%{http_code}" -X DELETE \
-            https://$REG/v2/$REPO/manifests/$DIGEST)
-          echo "DELETE $TAG ($DIGEST) -> HTTP $STATUS"
+            http://$REG/v2/$REPO/manifests/$MANIFEST_DIGEST)
+          echo "DELETE $TAG ($MANIFEST_DIGEST) -> HTTP $STATUS"
         done
 
   - name: update-gitops-tag

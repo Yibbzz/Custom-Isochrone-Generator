@@ -268,9 +268,37 @@
       failed_when: false
       tags: cluster
 
+    - name: Create k3d registry config dir
+      ansible.builtin.file:
+        path: /etc/k3d
+        state: directory
+        mode: "0755"
+      become: true
+      tags: cluster
+
+    - name: Write k3d registry config (enables delete)
+      ansible.builtin.copy:
+        dest: /etc/k3d/registry-config.yaml
+        mode: "0644"
+        content: |
+          version: 0.1
+          log:
+            level: info
+          storage:
+            filesystem:
+              rootdirectory: /var/lib/registry
+            delete:
+              enabled: true
+          http:
+            addr: :5000
+      become: true
+      tags: cluster
+
     - name: Create k3d registry
       ansible.builtin.command: >-
-        k3d registry create {{ k3d_registry_create_name }} --port {{ k3d_registry_port }}
+        k3d registry create {{ k3d_registry_create_name }}
+          --port {{ k3d_registry_port }}
+          --volume /etc/k3d/registry-config.yaml:/etc/docker/registry/config.yml
       when: k3d_registry_host not in (k3d_reg_list.stdout | default(''))
       tags: cluster
 
