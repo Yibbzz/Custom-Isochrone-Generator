@@ -32,20 +32,50 @@ steps:
       - export REG=192.168.0.202:5000
       - trivy image --insecure --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed $REG/isochrone-app:$TAG
 
-  # - name: test-unit
-  #   image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
-  #   commands:
-  #     - python manage.py test
-  #         myapp.tests.test_db_logic
-  #         myapp.tests.test_cleanup_commands
-  #         -v 2
-
-  # - name: test-osm
-  #   image: 192.168.0.202:5000/isochrone-app:${CI_COMMIT_SHA:0:12}
-  #   commands:
-  #     - python manage.py test
-  #         myapp.tests.test_full_integration.OsmGenerationTest
-  #         -v 2
+  - name: cleanup-old-images
+    image: alpine:latest
+    commands:
+      - apk add --no-cache curl jq
+      - export REG=192.168.0.202:5000
+      - export REPO=isochrone-app
+      - export KEEP=2
+      # Fetch all tags
+      - TAGS=$(curl -sk https://$REG/v2/$REPO/tags/list | jq -r '.tags[]')
+      # For each tag, get its creation date from the manifest and sort
+      - |
+        TAG_DATES=""
+        for TAG in $TAGS; do
+          DIGEST=$(curl -sk -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            https://$REG/v2/$REPO/manifests/$TAG \
+            | jq -r '.config.digest // empty')
+          if [ -z "$DIGEST" ]; then continue; fi
+          CREATED=$(curl -sk https://$REG/v2/$REPO/blobs/$DIGEST \
+            | jq -r '.created // empty')
+          if [ -z "$CREATED" ]; then continue; fi
+          TAG_DATES="$TAG_DATES $CREATED $TAG"
+        done
+      # Sort by date, drop the newest $KEEP, delete the rest
+      - |
+        SORTED=$(echo $TAG_DATES | xargs -n2 | sort -r | awk '{print $2}')
+        TO_DELETE=$(echo "$SORTED" | tail -n +$(($KEEP + 1)))
+        if [ -z "$TO_DELETE" ]; then
+          echo "Nothing to delete."
+          exit 0
+        fi
+        for TAG in $TO_DELETE; do
+          echo "Deleting tag: $TAG"
+          DIGEST=$(curl -sk -I \
+            -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+            https://$REG/v2/$REPO/manifests/$TAG \
+            | grep -i docker-content-digest | awk '{print $2}' | tr -d '\r')
+          if [ -z "$DIGEST" ]; then
+            echo "Could not get digest for $TAG, skipping."
+            continue
+          fi
+          STATUS=$(curl -sk -o /dev/null -w "%{http_code}" -X DELETE \
+            https://$REG/v2/$REPO/manifests/$DIGEST)
+          echo "DELETE $TAG ($DIGEST) -> HTTP $STATUS"
+        done
 
   - name: update-gitops-tag
     when:
@@ -66,5 +96,3 @@ steps:
       - git add apps/isochrone/dev.yaml
       - 'git commit -m "chore: deploy isochrone $TAG [skip ci]"'
       - git push origin main
-
-# test!
