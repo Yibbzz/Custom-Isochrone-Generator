@@ -66,3 +66,5 @@ steps:
       - git add apps/isochrone/dev.yaml
       - 'git commit -m "chore: deploy isochrone $TAG [skip ci]"'
       - git push origin main
+
+# test!
